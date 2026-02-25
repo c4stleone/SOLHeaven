@@ -39,12 +39,11 @@ services:
     working_dir: /workspace
     volumes:
       - ./:/workspace
-    entrypoint: ["/bin/bash", "-lc"]
-    command: >
-      set -euo pipefail;
+    entrypoint: /bin/bash
+    command: -c "set -euo pipefail;
       if [ ! -f target/deploy/outcome_escrow_anchor.so ]; then
-        echo "[deployer] missing target/deploy/outcome_escrow_anchor.so";
-        echo "[deployer] run anchor build first or include deploy artifact";
+        echo \"[deployer] missing target/deploy/outcome_escrow_anchor.so\";
+        echo \"[deployer] run anchor build first or include deploy artifact\";
         exit 1;
       fi;
       mkdir -p .docker/keys;
@@ -59,10 +58,8 @@ services:
         sleep 1;
       done;
       solana -u http://validator:8899 airdrop 100 || true;
-      solana -u http://validator:8899 program deploy
-      target/deploy/outcome_escrow_anchor.so
-      --program-id target/deploy/outcome_escrow_anchor-keypair.json;
-      echo "[deployer] program deployed";
+      solana -u http://validator:8899 program deploy target/deploy/outcome_escrow_anchor.so --program-id target/deploy/outcome_escrow_anchor-keypair.json;
+      echo \"[deployer] program deployed\""
 
 volumes:
   validator-ledger:
