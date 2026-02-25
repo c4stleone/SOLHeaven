@@ -4,6 +4,12 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { join, resolve } from "path";
 import { Keypair, PublicKey, Transaction } from "@solana/web3.js";
+import {
+  createMint,
+  getAssociatedTokenAddressSync,
+  getOrCreateAssociatedTokenAccount,
+  mintTo,
+} from "@solana/spl-token";
 import { loadKeypairFromFile, OutcomeEscrowClient } from "../sdk/src";
 
 type RoleName = "admin" | "ops" | "buyer" | "operator" | "treasury";
@@ -73,9 +79,26 @@ const PORT = Number(process.env.PORT ?? 8787);
 const RPC_URL = process.env.RPC_URL ?? "http://127.0.0.1:8899";
 const ADMIN_KEYPAIR =
   process.env.ADMIN_KEYPAIR ?? join(homedir(), ".config/solana/id.json");
+const STABLE_SYMBOL =
+  String(process.env.STABLE_SYMBOL ?? "USDC").trim() || "USDC";
+const STABLE_DECIMALS = Number(process.env.STABLE_DECIMALS ?? 6);
+if (
+  !Number.isInteger(STABLE_DECIMALS) ||
+  STABLE_DECIMALS < 0 ||
+  STABLE_DECIMALS > 18
+) {
+  throw new Error(
+    `invalid STABLE_DECIMALS: ${String(process.env.STABLE_DECIMALS)}`
+  );
+}
+const STABLE_BASE_UNITS = 10n ** BigInt(STABLE_DECIMALS);
+const DEFAULT_BOOTSTRAP_MINT_AMOUNT = String(
+  process.env.BOOTSTRAP_BUYER_UNITS ?? "1000000000"
+);
 const ROLE_DIR = resolve(process.cwd(), ".app-wallets");
 const META_DIR = resolve(process.cwd(), ".run");
 const META_STORE_PATH = join(META_DIR, "request_market_store.json");
+const STABLE_MINT_PATH = join(META_DIR, "stable_mint.json");
 
 function nowIso() {
   return new Date().toISOString();
@@ -95,9 +118,7 @@ function specKey(buyer: string, jobId: string): string {
 
 function toStringArray(value: unknown): string[] {
   if (Array.isArray(value)) {
-    return value
-      .map((v) => String(v ?? "").trim())
-      .filter((v) => Boolean(v));
+    return value.map((v) => String(v ?? "").trim()).filter((v) => Boolean(v));
   }
   if (typeof value === "string") {
     return value
@@ -114,7 +135,8 @@ function defaultCatalog(): CatalogItem[] {
     {
       id: "weekly-stock-research-mcp",
       title: "주간 주식시장 동향 리서치 MCP",
-      summary: "주요 종목/섹터/매크로 이슈를 주간 리포트로 정리하고 근거 출처를 첨부합니다.",
+      summary:
+        "주요 종목/섹터/매크로 이슈를 주간 리포트로 정리하고 근거 출처를 첨부합니다.",
       category: "research",
       outputFormat: "PDF",
       agentPriceLamports: defaultMcpConnection().priceLamports,
@@ -139,7 +161,9 @@ function defaultMcpConnection(): McpConnection {
 }
 
 function normalizeLamports(value: unknown, field: string): string {
-  const text = String(value ?? "").trim().replace(/,/g, "");
+  const text = String(value ?? "")
+    .trim()
+    .replace(/,/g, "");
   if (!text) {
     throw new Error(`${field} is required`);
   }
@@ -150,24 +174,26 @@ function normalizeLamports(value: unknown, field: string): string {
 }
 
 function normalizeLamportsOrFallback(value: unknown, fallback: string): string {
-  const text = String(value ?? "").trim().replace(/,/g, "");
+  const text = String(value ?? "")
+    .trim()
+    .replace(/,/g, "");
   if (!text || !/^\d+$/.test(text)) {
     return fallback;
   }
   return text;
 }
 
-function lamportsToSolText(value: string): string {
+function unitsToStableText(value: string): string {
   try {
-    const lamports = BigInt(value);
-    const whole = lamports / 1_000_000_000n;
-    const fractional = (lamports % 1_000_000_000n)
+    const units = BigInt(value);
+    const whole = units / STABLE_BASE_UNITS;
+    const fractional = (units % STABLE_BASE_UNITS)
       .toString()
-      .padStart(9, "0")
+      .padStart(STABLE_DECIMALS, "0")
       .slice(0, 4);
-    return `${whole}.${fractional}`;
+    return `${whole}.${fractional} ${STABLE_SYMBOL}`;
   } catch (_e) {
-    return "0.0000";
+    return `0.0000 ${STABLE_SYMBOL}`;
   }
 }
 
@@ -212,7 +238,9 @@ function serializeMcpConnection(connection: McpConnection) {
     serverUrl: connection.serverUrl,
     healthPath: connection.healthPath,
     priceLamports: connection.priceLamports,
-    priceSol: lamportsToSolText(connection.priceLamports),
+    priceDisplay: unitsToStableText(connection.priceLamports),
+    priceSymbol: STABLE_SYMBOL,
+    priceSol: unitsToStableText(connection.priceLamports),
     hasAuthToken: Boolean(connection.authToken),
     lastCheckedAt: connection.lastCheckedAt,
     lastStatus: connection.lastStatus,
@@ -224,11 +252,16 @@ function serializeMcpConnection(connection: McpConnection) {
 function serializeCatalogItem(item: CatalogItem) {
   return {
     ...item,
-    agentPriceSol: lamportsToSolText(item.agentPriceLamports),
+    agentPriceDisplay: unitsToStableText(item.agentPriceLamports),
+    agentPriceSymbol: STABLE_SYMBOL,
+    agentPriceSol: unitsToStableText(item.agentPriceLamports),
   };
 }
 
-function normalizeCatalogItem(input: any, fallbackPriceLamports: string): CatalogItem {
+function normalizeCatalogItem(
+  input: any,
+  fallbackPriceLamports: string
+): CatalogItem {
   const title = String(input?.title ?? "").trim();
   if (!title) {
     throw new Error("service title is required");
@@ -260,7 +293,10 @@ function normalizeCriteria(input: any): SuccessCriteria {
   return {
     minPages: Math.max(0, toNumber(input?.minPages, 0)),
     minSourceLinks: Math.max(0, toNumber(input?.minSourceLinks, 0)),
-    minTrustedDomainRatio: Math.max(0, Math.min(100, toNumber(input?.minTrustedDomainRatio, 0))),
+    minTrustedDomainRatio: Math.max(
+      0,
+      Math.min(100, toNumber(input?.minTrustedDomainRatio, 0))
+    ),
     requireTableOrChart: toBool(input?.requireTableOrChart, false),
     requiredFormat: String(input?.requiredFormat ?? "PDF").trim() || "PDF",
     requiredQuestions: toStringArray(input?.requiredQuestions),
@@ -299,14 +335,19 @@ function loadMetaStore(): MetaStore {
         }))
       : [];
     const normalizedServices =
-      services.filter((svc: CatalogItem) => Boolean(svc.id) && Boolean(svc.title)).length > 0
-        ? services.filter((svc: CatalogItem) => Boolean(svc.id) && Boolean(svc.title))
+      services.filter(
+        (svc: CatalogItem) => Boolean(svc.id) && Boolean(svc.title)
+      ).length > 0
+        ? services.filter(
+            (svc: CatalogItem) => Boolean(svc.id) && Boolean(svc.title)
+          )
         : defaultCatalog();
 
     return {
       version: 1,
       services: normalizedServices,
-      specs: parsed?.specs && typeof parsed.specs === "object" ? parsed.specs : {},
+      specs:
+        parsed?.specs && typeof parsed.specs === "object" ? parsed.specs : {},
       mcpConnection:
         parsed?.mcpConnection && typeof parsed.mcpConnection === "object"
           ? {
@@ -316,7 +357,9 @@ function loadMetaStore(): MetaStore {
                 String(parsed?.mcpConnection?.name ?? "").trim() ||
                 defaultMcpConnection().name,
               serverUrl: String(parsed?.mcpConnection?.serverUrl ?? "").trim(),
-              healthPath: normalizeHealthPath(parsed?.mcpConnection?.healthPath),
+              healthPath: normalizeHealthPath(
+                parsed?.mcpConnection?.healthPath
+              ),
               priceLamports: normalizeLamportsOrFallback(
                 parsed?.mcpConnection?.priceLamports,
                 defaultMcpConnection().priceLamports
@@ -417,6 +460,7 @@ function serializeConfig(config: any) {
     admin: pubkey(config.admin),
     ops: pubkey(config.ops),
     treasury: pubkey(config.treasury),
+    stableMint: pubkey(config.stableMint),
     bump: config.bump,
   };
 }
@@ -452,6 +496,39 @@ function rolePublicKeys(roles: Record<RoleName, Keypair>) {
   };
 }
 
+function readStableMintFromDisk(): PublicKey | null {
+  try {
+    if (!existsSync(STABLE_MINT_PATH)) {
+      return null;
+    }
+    const parsed = JSON.parse(readFileSync(STABLE_MINT_PATH, "utf-8"));
+    const value = String(parsed?.mint ?? "").trim();
+    if (!value) {
+      return null;
+    }
+    return new PublicKey(value);
+  } catch (_e) {
+    return null;
+  }
+}
+
+function writeStableMintToDisk(mint: PublicKey) {
+  mkdirSync(META_DIR, { recursive: true });
+  writeFileSync(
+    STABLE_MINT_PATH,
+    JSON.stringify(
+      {
+        mint: mint.toBase58(),
+        symbol: STABLE_SYMBOL,
+        decimals: STABLE_DECIMALS,
+        updatedAt: nowIso(),
+      },
+      null,
+      2
+    )
+  );
+}
+
 function serializeAny(value: any): any {
   if (value === null || value === undefined) {
     return value;
@@ -462,14 +539,20 @@ function serializeAny(value: any): any {
   if (typeof value === "object" && typeof value.toBase58 === "function") {
     return value.toBase58();
   }
-  if (typeof value === "object" && typeof value.toString === "function" && value.constructor?.name === "BN") {
+  if (
+    typeof value === "object" &&
+    typeof value.toString === "function" &&
+    value.constructor?.name === "BN"
+  ) {
     return value.toString();
   }
   if (Array.isArray(value)) {
     return value.map(serializeAny);
   }
   if (typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, serializeAny(v)]));
+    return Object.fromEntries(
+      Object.entries(value).map(([k, v]) => [k, serializeAny(v)])
+    );
   }
   return value;
 }
@@ -498,6 +581,74 @@ const wrap =
   (handler: (req: Request, res: Response) => Promise<void>) =>
   (req: Request, res: Response, next: (err?: unknown) => void) =>
     handler(req, res).catch(next);
+
+async function ensureStableMint(): Promise<PublicKey> {
+  const cached = readStableMintFromDisk();
+  if (cached) {
+    const info = await client.provider.connection.getAccountInfo(
+      cached,
+      "confirmed"
+    );
+    if (info) {
+      return cached;
+    }
+  }
+
+  const mint = await createMint(
+    client.provider.connection,
+    roles.admin,
+    roles.admin.publicKey,
+    null,
+    STABLE_DECIMALS
+  );
+  writeStableMintToDisk(mint);
+  return mint;
+}
+
+function tokenAmountBigInt(value: unknown, field: string): bigint {
+  const normalized = normalizeLamports(value, field);
+  return BigInt(normalized);
+}
+
+async function ensureRoleTokenAccounts(stableMint: PublicKey) {
+  const entries = await Promise.all(
+    (Object.keys(roles) as RoleName[]).map(async (role) => {
+      const token = await getOrCreateAssociatedTokenAccount(
+        client.provider.connection,
+        roles.admin,
+        stableMint,
+        roles[role].publicKey
+      );
+      return [role, token.address.toBase58()] as const;
+    })
+  );
+  return Object.fromEntries(entries) as Record<RoleName, string>;
+}
+
+async function roleTokenAccountsFromMint(stableMint: PublicKey) {
+  return {
+    admin: getAssociatedTokenAddressSync(
+      stableMint,
+      roles.admin.publicKey
+    ).toBase58(),
+    ops: getAssociatedTokenAddressSync(
+      stableMint,
+      roles.ops.publicKey
+    ).toBase58(),
+    buyer: getAssociatedTokenAddressSync(
+      stableMint,
+      roles.buyer.publicKey
+    ).toBase58(),
+    operator: getAssociatedTokenAddressSync(
+      stableMint,
+      roles.operator.publicKey
+    ).toBase58(),
+    treasury: getAssociatedTokenAddressSync(
+      stableMint,
+      roles.treasury.publicKey
+    ).toBase58(),
+  } as Record<RoleName, string>;
+}
 
 function operatorRewardLamportsBn(): anchor.BN {
   return toBn(metaStore.mcpConnection.priceLamports, "operatorPriceLamports");
@@ -529,7 +680,10 @@ function serviceRewardForCreate(serviceIdInput: unknown): {
   }
 
   return {
-    rewardLamports: toBn(matched.agentPriceLamports, "serviceAgentPriceLamports"),
+    rewardLamports: toBn(
+      matched.agentPriceLamports,
+      "serviceAgentPriceLamports"
+    ),
     pricingSource: `catalog:${matched.id}`,
     serviceId: matched.id,
   };
@@ -541,92 +695,194 @@ app.use(express.static(resolve(process.cwd(), "app/public")));
 app.get(
   "/api/health",
   wrap(async (_req: Request, res: Response) => {
-  const version = await client.provider.connection.getVersion();
-  res.json({
-    ok: true,
-    rpcUrl: RPC_URL,
-    programId: client.programId.toBase58(),
-    version,
-  });
+    const version = await client.provider.connection.getVersion();
+    const config = await client.fetchConfig();
+    const stableMint =
+      config?.stableMint?.toBase58?.() ??
+      readStableMintFromDisk()?.toBase58() ??
+      null;
+    res.json({
+      ok: true,
+      rpcUrl: RPC_URL,
+      programId: client.programId.toBase58(),
+      version,
+      stableSymbol: STABLE_SYMBOL,
+      stableDecimals: STABLE_DECIMALS,
+      stableMint,
+    });
   })
 );
 
-app.get("/api/wallets", (_req: Request, res: Response) => {
-  res.json({
-    ok: true,
-    roles: rolePublicKeys(roles),
-  });
-});
+app.get(
+  "/api/wallets",
+  wrap(async (_req: Request, res: Response) => {
+    const config = await client.fetchConfig();
+    const stableMint = config?.stableMint ?? readStableMintFromDisk();
+    const roleTokenAccounts = stableMint
+      ? await roleTokenAccountsFromMint(stableMint)
+      : null;
+    res.json({
+      ok: true,
+      roles: rolePublicKeys(roles),
+      stableSymbol: STABLE_SYMBOL,
+      stableDecimals: STABLE_DECIMALS,
+      stableMint: stableMint ? stableMint.toBase58() : null,
+      roleTokenAccounts,
+    });
+  })
+);
 
 app.get(
   "/api/config",
   wrap(async (_req: Request, res: Response) => {
-  const config = await client.fetchConfig();
-  res.json({
-    ok: true,
-    configPda: client.configPda.toBase58(),
-    config: serializeConfig(config),
-  });
+    const config = await client.fetchConfig();
+    const stableMint = config?.stableMint ?? readStableMintFromDisk();
+    const roleTokenAccounts = stableMint
+      ? await roleTokenAccountsFromMint(stableMint)
+      : null;
+    res.json({
+      ok: true,
+      configPda: client.configPda.toBase58(),
+      config: serializeConfig(config),
+      stableSymbol: STABLE_SYMBOL,
+      stableDecimals: STABLE_DECIMALS,
+      stableMint: stableMint ? stableMint.toBase58() : null,
+      roleTokenAccounts,
+    });
   })
 );
 
 app.post(
   "/api/bootstrap",
   wrap(async (req: Request, res: Response) => {
-  const bootstrapSol = toNumber(req.body?.sol, 2);
-  let initSig = await client.ensureConfig(
-    roles.admin,
-    roles.ops.publicKey,
-    roles.treasury.publicKey
-  );
-  let updateOpsSig: string | null = null;
-  const config = await client.fetchConfig();
-
-  if (config && !config.ops.equals(roles.ops.publicKey)) {
-    updateOpsSig = await client.updateOps(roles.admin, roles.ops.publicKey);
-    initSig = initSig ?? updateOpsSig;
-  }
-
-  const funded: Record<string, string | null> = {};
-  for (const role of ["ops", "buyer", "operator", "treasury"] as const) {
-    try {
-      funded[role] = await client.airdrop(roles[role].publicKey, bootstrapSol);
-    } catch (_e) {
-      funded[role] = null;
+    const bootstrapSol = toNumber(req.body?.sol, 2);
+    const stableMint = await ensureStableMint();
+    const bootstrapBuyerUnits = tokenAmountBigInt(
+      req.body?.buyerUnits ?? DEFAULT_BOOTSTRAP_MINT_AMOUNT,
+      "buyerUnits"
+    );
+    let initSig = await client.ensureConfig(
+      roles.admin,
+      roles.ops.publicKey,
+      roles.treasury.publicKey,
+      stableMint
+    );
+    let updateOpsSig: string | null = null;
+    const config = await client.fetchConfig();
+    if (!config) {
+      throw new Error("config initialization failed");
     }
-  }
+    if (!config.stableMint.equals(stableMint)) {
+      throw new Error(
+        `stable mint mismatch: config=${config.stableMint.toBase58()} local=${stableMint.toBase58()}`
+      );
+    }
 
-  const latestConfig = await client.fetchConfig();
-  res.json({
-    ok: true,
-    initialized: Boolean(initSig || updateOpsSig),
-    signature: initSig,
-    updateOpsSignature: updateOpsSig,
-    bootstrapSol,
-    funded,
-    configPda: client.configPda.toBase58(),
-    config: serializeConfig(latestConfig),
-  });
+    if (!config.ops.equals(roles.ops.publicKey)) {
+      updateOpsSig = await client.updateOps(roles.admin, roles.ops.publicKey);
+      initSig = initSig ?? updateOpsSig;
+    }
+
+    const funded: Record<string, string | null> = {};
+    for (const role of ["ops", "buyer", "operator", "treasury"] as const) {
+      try {
+        funded[role] = await client.airdrop(
+          roles[role].publicKey,
+          bootstrapSol
+        );
+      } catch (_e) {
+        funded[role] = null;
+      }
+    }
+
+    const roleTokenAccounts = await ensureRoleTokenAccounts(stableMint);
+    const buyerMintSig = await mintTo(
+      client.provider.connection,
+      roles.admin,
+      stableMint,
+      new PublicKey(roleTokenAccounts.buyer),
+      roles.admin,
+      bootstrapBuyerUnits
+    );
+
+    const latestConfig = await client.fetchConfig();
+    res.json({
+      ok: true,
+      initialized: Boolean(initSig || updateOpsSig),
+      signature: initSig,
+      updateOpsSignature: updateOpsSig,
+      bootstrapSol,
+      funded,
+      stableSymbol: STABLE_SYMBOL,
+      stableDecimals: STABLE_DECIMALS,
+      stableMint: stableMint.toBase58(),
+      buyerMintedUnits: bootstrapBuyerUnits.toString(),
+      buyerMintSignature: buyerMintSig,
+      roleTokenAccounts,
+      configPda: client.configPda.toBase58(),
+      config: serializeConfig(latestConfig),
+    });
   })
 );
 
 app.post(
   "/api/airdrop",
   wrap(async (req: Request, res: Response) => {
-  const role = (req.body.role ?? "buyer") as RoleName;
-  const sol = toNumber(req.body.sol, 2);
-  if (!roles[role]) {
-    throw new Error(`invalid role: ${role}`);
-  }
+    const role = (req.body.role ?? "buyer") as RoleName;
+    const sol = toNumber(req.body.sol, 2);
+    if (!roles[role]) {
+      throw new Error(`invalid role: ${role}`);
+    }
 
-  const signature = await client.airdrop(roles[role].publicKey, sol);
-  res.json({
-    ok: true,
-    role,
-    sol,
-    pubkey: roles[role].publicKey.toBase58(),
-    signature,
-  });
+    const signature = await client.airdrop(roles[role].publicKey, sol);
+    res.json({
+      ok: true,
+      role,
+      sol,
+      pubkey: roles[role].publicKey.toBase58(),
+      signature,
+    });
+  })
+);
+
+app.post(
+  "/api/token/faucet",
+  wrap(async (req: Request, res: Response) => {
+    const owner =
+      req.body?.owner === undefined ||
+      req.body?.owner === null ||
+      req.body?.owner === ""
+        ? roles.buyer.publicKey
+        : toPubkey(req.body.owner, "owner");
+    const amount = tokenAmountBigInt(
+      req.body?.amountUnits ?? req.body?.amount ?? "10000000",
+      "amountUnits"
+    );
+    const stableMint = await ensureStableMint();
+    const ata = await getOrCreateAssociatedTokenAccount(
+      client.provider.connection,
+      roles.admin,
+      stableMint,
+      owner
+    );
+    const signature = await mintTo(
+      client.provider.connection,
+      roles.admin,
+      stableMint,
+      ata.address,
+      roles.admin,
+      amount
+    );
+    res.json({
+      ok: true,
+      owner: owner.toBase58(),
+      symbol: STABLE_SYMBOL,
+      decimals: STABLE_DECIMALS,
+      stableMint: stableMint.toBase58(),
+      tokenAccount: ata.address.toBase58(),
+      amountUnits: amount.toString(),
+      signature,
+    });
   })
 );
 
@@ -638,15 +894,24 @@ app.get("/api/operator/catalog", (_req: Request, res: Response) => {
     ok: true,
     services,
     operatorPriceLamports: metaStore.mcpConnection.priceLamports,
-    operatorPriceSol: lamportsToSolText(metaStore.mcpConnection.priceLamports),
+    operatorPriceDisplay: unitsToStableText(
+      metaStore.mcpConnection.priceLamports
+    ),
+    operatorPriceSymbol: STABLE_SYMBOL,
+    operatorPriceSol: unitsToStableText(metaStore.mcpConnection.priceLamports),
   });
 });
 
 app.post(
   "/api/operator/catalog",
   wrap(async (req: Request, res: Response) => {
-    const normalized = normalizeCatalogItem(req.body ?? {}, metaStore.mcpConnection.priceLamports);
-    const existingIndex = metaStore.services.findIndex((svc) => svc.id === normalized.id);
+    const normalized = normalizeCatalogItem(
+      req.body ?? {},
+      metaStore.mcpConnection.priceLamports
+    );
+    const existingIndex = metaStore.services.findIndex(
+      (svc) => svc.id === normalized.id
+    );
     let item: CatalogItem;
 
     if (existingIndex >= 0) {
@@ -670,7 +935,13 @@ app.post(
       service: serializeCatalogItem(item),
       services: metaStore.services.map((svc) => serializeCatalogItem(svc)),
       operatorPriceLamports: metaStore.mcpConnection.priceLamports,
-      operatorPriceSol: lamportsToSolText(metaStore.mcpConnection.priceLamports),
+      operatorPriceDisplay: unitsToStableText(
+        metaStore.mcpConnection.priceLamports
+      ),
+      operatorPriceSymbol: STABLE_SYMBOL,
+      operatorPriceSol: unitsToStableText(
+        metaStore.mcpConnection.priceLamports
+      ),
     });
   })
 );
@@ -834,12 +1105,17 @@ app.post(
     const jobId = toBn(req.body.jobId, "jobId").toString();
     const key = specKey(buyer, jobId);
     const serviceId = String(req.body.serviceId ?? "").trim();
-    const catalog = serviceId ? metaStore.services.find((svc) => svc.id === serviceId) : null;
-    const serviceTitle = String(req.body.serviceTitle ?? catalog?.title ?? "").trim();
+    const catalog = serviceId
+      ? metaStore.services.find((svc) => svc.id === serviceId)
+      : null;
+    const serviceTitle = String(
+      req.body.serviceTitle ?? catalog?.title ?? ""
+    ).trim();
     if (!serviceTitle) {
       throw new Error("serviceTitle is required");
     }
-    const taskTitle = String(req.body.taskTitle ?? serviceTitle).trim() || serviceTitle;
+    const taskTitle =
+      String(req.body.taskTitle ?? serviceTitle).trim() || serviceTitle;
     const taskBrief = String(req.body.taskBrief ?? "").trim();
     const criteria = normalizeCriteria(req.body.criteria ?? {});
     const ts = nowIso();
@@ -877,7 +1153,9 @@ app.get(
   "/api/jobs/spec/:jobId",
   wrap(async (req: Request, res: Response) => {
     const jobId = toBn(req.params.jobId, "jobId").toString();
-    const buyerParam = Array.isArray(req.query.buyer) ? req.query.buyer[0] : req.query.buyer;
+    const buyerParam = Array.isArray(req.query.buyer)
+      ? req.query.buyer[0]
+      : req.query.buyer;
     const buyer =
       buyerParam === undefined || buyerParam === null || buyerParam === ""
         ? roles.buyer.publicKey.toBase58()
@@ -896,7 +1174,9 @@ app.get(
 app.get(
   "/api/operator/requests",
   wrap(async (req: Request, res: Response) => {
-    const statusFilterRaw = Array.isArray(req.query.status) ? req.query.status[0] : req.query.status;
+    const statusFilterRaw = Array.isArray(req.query.status)
+      ? req.query.status[0]
+      : req.query.status;
     const statusFilter = statusFilterRaw ? String(statusFilterRaw).trim() : "";
     const specs = Object.values(metaStore.specs)
       .filter((spec) => !statusFilter || spec.requestStatus === statusFilter)
@@ -929,8 +1209,10 @@ app.get(
       pending: requests.filter((r) => r.requestStatus === "pending").length,
       approved: requests.filter((r) => r.requestStatus === "approved").length,
       rejected: requests.filter((r) => r.requestStatus === "rejected").length,
-      submittedOnChain: requests.filter((r) => Number(r.job?.status) === 2).length,
-      settledOnChain: requests.filter((r) => Number(r.job?.status) === 4).length,
+      submittedOnChain: requests.filter((r) => Number(r.job?.status) === 2)
+        .length,
+      settledOnChain: requests.filter((r) => Number(r.job?.status) === 4)
+        .length,
     };
 
     res.json({
@@ -946,7 +1228,9 @@ app.post(
   wrap(async (req: Request, res: Response) => {
     const buyer = toPubkey(req.body.buyer, "buyer").toBase58();
     const jobId = toBn(req.body.jobId, "jobId").toString();
-    const decisionRaw = String(req.body.decision ?? "").trim().toLowerCase();
+    const decisionRaw = String(req.body.decision ?? "")
+      .trim()
+      .toLowerCase();
     if (decisionRaw !== "approved" && decisionRaw !== "rejected") {
       throw new Error("decision must be approved or rejected");
     }
@@ -977,348 +1261,386 @@ app.post(
 app.post(
   "/api/tx/create",
   wrap(async (req: Request, res: Response) => {
-  const now = Math.floor(Date.now() / 1000);
-  const buyer = toPubkey(req.body.buyer, "buyer");
-  const jobId =
-    req.body.jobId === undefined || req.body.jobId === null || req.body.jobId === ""
-      ? new anchor.BN(now)
-      : toBn(req.body.jobId, "jobId");
-  const pricing = serviceRewardForCreate(req.body.serviceId);
-  const rewardLamports = pricing.rewardLamports;
-  const feeBps = toNumber(req.body.feeBps, 100);
-  const deadlineAt = toBn(
-    req.body.deadlineAt ?? now + toNumber(req.body.deadlineSeconds, 3600),
-    "deadlineAt"
-  );
+    const now = Math.floor(Date.now() / 1000);
+    const buyer = toPubkey(req.body.buyer, "buyer");
+    const jobId =
+      req.body.jobId === undefined ||
+      req.body.jobId === null ||
+      req.body.jobId === ""
+        ? new anchor.BN(now)
+        : toBn(req.body.jobId, "jobId");
+    const pricing = serviceRewardForCreate(req.body.serviceId);
+    const rewardLamports = pricing.rewardLamports;
+    const feeBps = toNumber(req.body.feeBps, 100);
+    const deadlineAt = toBn(
+      req.body.deadlineAt ?? now + toNumber(req.body.deadlineSeconds, 3600),
+      "deadlineAt"
+    );
 
-  const { tx, job } = await client.buildCreateJobTx({
-    buyer,
-    operator: roles.operator.publicKey,
-    jobId,
-    rewardLamports,
-    feeBps,
-    deadlineAt,
-  });
-  await client.hydrateTransaction(tx, buyer);
+    const { tx, job } = await client.buildCreateJobTx({
+      buyer,
+      operator: roles.operator.publicKey,
+      jobId,
+      rewardLamports,
+      feeBps,
+      deadlineAt,
+    });
+    await client.hydrateTransaction(tx, buyer);
 
-  res.json({
-    ok: true,
-    txBase64: serializeUnsignedTx(tx),
-    buyer: buyer.toBase58(),
-    operator: roles.operator.publicKey.toBase58(),
-    jobPda: job.toBase58(),
-    jobId: jobId.toString(),
-    serviceId: pricing.serviceId,
-    rewardLamports: rewardLamports.toString(),
-    pricingSource: pricing.pricingSource,
-  });
+    res.json({
+      ok: true,
+      txBase64: serializeUnsignedTx(tx),
+      buyer: buyer.toBase58(),
+      operator: roles.operator.publicKey.toBase58(),
+      jobPda: job.toBase58(),
+      jobId: jobId.toString(),
+      serviceId: pricing.serviceId,
+      rewardLamports: rewardLamports.toString(),
+      pricingSource: pricing.pricingSource,
+    });
   })
 );
 
 app.post(
   "/api/tx/fund",
   wrap(async (req: Request, res: Response) => {
-  const buyer = toPubkey(req.body.buyer, "buyer");
-  const jobId = toBn(req.body.jobId, "jobId");
+    const buyer = toPubkey(req.body.buyer, "buyer");
+    const jobId = toBn(req.body.jobId, "jobId");
 
-  const { tx, job } = await client.buildFundJobTx(buyer, jobId);
-  await client.hydrateTransaction(tx, buyer);
+    const { tx, job } = await client.buildFundJobTx(buyer, jobId);
+    await client.hydrateTransaction(tx, buyer);
 
-  res.json({
-    ok: true,
-    txBase64: serializeUnsignedTx(tx),
-    buyer: buyer.toBase58(),
-    jobPda: job.toBase58(),
-    jobId: jobId.toString(),
-  });
+    res.json({
+      ok: true,
+      txBase64: serializeUnsignedTx(tx),
+      buyer: buyer.toBase58(),
+      jobPda: job.toBase58(),
+      jobId: jobId.toString(),
+    });
   })
 );
 
 app.post(
   "/api/tx/review",
   wrap(async (req: Request, res: Response) => {
-  const buyer = toPubkey(req.body.buyer, "buyer");
-  const jobId = toBn(req.body.jobId, "jobId");
-  const approve = toBool(req.body.approve, true);
+    const buyer = toPubkey(req.body.buyer, "buyer");
+    const jobId = toBn(req.body.jobId, "jobId");
+    const approve = toBool(req.body.approve, true);
 
-  const { tx, job } = await client.buildReviewJobTx(
-    buyer,
-    roles.operator.publicKey,
-    jobId,
-    approve
-  );
-  await client.hydrateTransaction(tx, buyer);
+    const { tx, job } = await client.buildReviewJobTx(
+      buyer,
+      roles.operator.publicKey,
+      jobId,
+      approve
+    );
+    await client.hydrateTransaction(tx, buyer);
 
-  res.json({
-    ok: true,
-    txBase64: serializeUnsignedTx(tx),
-    buyer: buyer.toBase58(),
-    approve,
-    jobPda: job.toBase58(),
-    jobId: jobId.toString(),
-  });
+    res.json({
+      ok: true,
+      txBase64: serializeUnsignedTx(tx),
+      buyer: buyer.toBase58(),
+      approve,
+      jobPda: job.toBase58(),
+      jobId: jobId.toString(),
+    });
   })
 );
 
 app.post(
   "/api/tx/timeout",
   wrap(async (req: Request, res: Response) => {
-  const actor = toPubkey(req.body.actor, "actor");
-  const buyer = toPubkey(req.body.buyer, "buyer");
-  const jobId = toBn(req.body.jobId, "jobId");
+    const actor = toPubkey(req.body.actor, "actor");
+    const buyer = toPubkey(req.body.buyer, "buyer");
+    const jobId = toBn(req.body.jobId, "jobId");
 
-  const { tx, job } = await client.buildTriggerTimeoutTx(actor, buyer, jobId);
-  await client.hydrateTransaction(tx, actor);
+    const { tx, job } = await client.buildTriggerTimeoutTx(actor, buyer, jobId);
+    await client.hydrateTransaction(tx, actor);
 
-  res.json({
-    ok: true,
-    txBase64: serializeUnsignedTx(tx),
-    actor: actor.toBase58(),
-    buyer: buyer.toBase58(),
-    jobPda: job.toBase58(),
-    jobId: jobId.toString(),
-  });
+    res.json({
+      ok: true,
+      txBase64: serializeUnsignedTx(tx),
+      actor: actor.toBase58(),
+      buyer: buyer.toBase58(),
+      jobPda: job.toBase58(),
+      jobId: jobId.toString(),
+    });
   })
 );
 
 app.post(
   "/api/tx/send",
   wrap(async (req: Request, res: Response) => {
-  const signedTxBase64 = String(req.body.signedTxBase64 ?? "");
-  if (!signedTxBase64) {
-    throw new Error("missing field: signedTxBase64");
-  }
-  const raw = Buffer.from(signedTxBase64, "base64");
-  const signature = await client.provider.connection.sendRawTransaction(raw, {
-    skipPreflight: false,
-    maxRetries: 3,
-  });
-  await client.provider.connection.confirmTransaction(signature, "confirmed");
+    const signedTxBase64 = String(req.body.signedTxBase64 ?? "");
+    if (!signedTxBase64) {
+      throw new Error("missing field: signedTxBase64");
+    }
+    const raw = Buffer.from(signedTxBase64, "base64");
+    const signature = await client.provider.connection.sendRawTransaction(raw, {
+      skipPreflight: false,
+      maxRetries: 3,
+    });
+    await client.provider.connection.confirmTransaction(signature, "confirmed");
 
-  let events: Array<{ name: string; data: unknown }> = [];
-  try {
-    const parsed = await client.parseEvents(signature);
-    events = parsed.map((e) => ({ name: e.name, data: serializeAny(e.data) }));
-  } catch (_e) {
-    events = [];
-  }
+    let events: Array<{ name: string; data: unknown }> = [];
+    try {
+      const parsed = await client.parseEvents(signature);
+      events = parsed.map((e) => ({
+        name: e.name,
+        data: serializeAny(e.data),
+      }));
+    } catch (_e) {
+      events = [];
+    }
 
-  res.json({
-    ok: true,
-    signature,
-    events,
-  });
+    res.json({
+      ok: true,
+      signature,
+      events,
+    });
   })
 );
 
 app.post(
   "/api/jobs/create",
   wrap(async (req: Request, res: Response) => {
-  const now = Math.floor(Date.now() / 1000);
-  const jobId =
-    req.body.jobId === undefined || req.body.jobId === null || req.body.jobId === ""
-      ? new anchor.BN(now)
-      : toBn(req.body.jobId, "jobId");
-  const pricing = serviceRewardForCreate(req.body.serviceId);
-  const rewardLamports = pricing.rewardLamports;
-  const feeBps = toNumber(req.body.feeBps, 100);
-  const deadlineAt = toBn(
-    req.body.deadlineAt ?? now + toNumber(req.body.deadlineSeconds, 3600),
-    "deadlineAt"
-  );
+    const now = Math.floor(Date.now() / 1000);
+    const jobId =
+      req.body.jobId === undefined ||
+      req.body.jobId === null ||
+      req.body.jobId === ""
+        ? new anchor.BN(now)
+        : toBn(req.body.jobId, "jobId");
+    const pricing = serviceRewardForCreate(req.body.serviceId);
+    const rewardLamports = pricing.rewardLamports;
+    const feeBps = toNumber(req.body.feeBps, 100);
+    const deadlineAt = toBn(
+      req.body.deadlineAt ?? now + toNumber(req.body.deadlineSeconds, 3600),
+      "deadlineAt"
+    );
 
-  const { signature, job } = await client.createJob({
-    buyer: roles.buyer,
-    operator: roles.operator.publicKey,
-    jobId,
-    rewardLamports,
-    feeBps,
-    deadlineAt,
-  });
+    const { signature, job } = await client.createJob({
+      buyer: roles.buyer,
+      operator: roles.operator.publicKey,
+      jobId,
+      rewardLamports,
+      feeBps,
+      deadlineAt,
+    });
 
-  const account = await client.fetchJob(roles.buyer.publicKey, jobId);
+    const account = await client.fetchJob(roles.buyer.publicKey, jobId);
 
-  res.json({
-    ok: true,
-    signature,
-    jobPda: job.toBase58(),
-    jobId: jobId.toString(),
-    serviceId: pricing.serviceId,
-    rewardLamports: rewardLamports.toString(),
-    pricingSource: pricing.pricingSource,
-    job: serializeJob(account),
-  });
+    res.json({
+      ok: true,
+      signature,
+      jobPda: job.toBase58(),
+      jobId: jobId.toString(),
+      serviceId: pricing.serviceId,
+      rewardLamports: rewardLamports.toString(),
+      pricingSource: pricing.pricingSource,
+      job: serializeJob(account),
+    });
   })
 );
 
 app.post(
   "/api/jobs/fund",
   wrap(async (req: Request, res: Response) => {
-  const jobId = toBn(req.body.jobId, "jobId");
-  const { signature, job } = await client.fundJob(roles.buyer, jobId);
-  const account = await client.fetchJob(roles.buyer.publicKey, jobId);
-  res.json({
-    ok: true,
-    signature,
-    jobPda: job.toBase58(),
-    job: serializeJob(account),
-  });
+    const jobId = toBn(req.body.jobId, "jobId");
+    const { signature, job } = await client.fundJob(roles.buyer, jobId);
+    const account = await client.fetchJob(roles.buyer.publicKey, jobId);
+    res.json({
+      ok: true,
+      signature,
+      jobPda: job.toBase58(),
+      job: serializeJob(account),
+    });
   })
 );
 
 app.post(
   "/api/jobs/submit",
   wrap(async (req: Request, res: Response) => {
-  const jobId = toBn(req.body.jobId, "jobId");
-  const buyer =
-    req.body.buyer === undefined || req.body.buyer === null || req.body.buyer === ""
-      ? roles.buyer.publicKey
-      : toPubkey(req.body.buyer, "buyer");
-  const submission = String(req.body.submission ?? `submission-${Date.now()}`);
-  const specLookupKey = specKey(buyer.toBase58(), jobId.toString());
-  const linkedSpec = metaStore.specs[specLookupKey];
-  if (linkedSpec && linkedSpec.requestStatus === "rejected") {
-    throw new Error("request was rejected by operator. update spec and approve request first");
-  }
+    const jobId = toBn(req.body.jobId, "jobId");
+    const buyer =
+      req.body.buyer === undefined ||
+      req.body.buyer === null ||
+      req.body.buyer === ""
+        ? roles.buyer.publicKey
+        : toPubkey(req.body.buyer, "buyer");
+    const submission = String(
+      req.body.submission ?? `submission-${Date.now()}`
+    );
+    const specLookupKey = specKey(buyer.toBase58(), jobId.toString());
+    const linkedSpec = metaStore.specs[specLookupKey];
+    if (linkedSpec && linkedSpec.requestStatus === "rejected") {
+      throw new Error(
+        "request was rejected by operator. update spec and approve request first"
+      );
+    }
 
-  const { signature, job } = await client.submitResult(buyer, roles.operator, jobId, submission);
-  const account = await client.fetchJob(buyer, jobId);
+    const { signature, job } = await client.submitResult(
+      buyer,
+      roles.operator,
+      jobId,
+      submission
+    );
+    const account = await client.fetchJob(buyer, jobId);
 
-  if (linkedSpec) {
-    metaStore.specs[specLookupKey] = {
-      ...linkedSpec,
-      requestStatus: linkedSpec.requestStatus === "pending" ? "approved" : linkedSpec.requestStatus,
-      submittedAt: nowIso(),
-      lastSubmissionPreview: submission.slice(0, 180),
-      updatedAt: nowIso(),
-    };
-    persistMetaStore(metaStore);
-  }
+    if (linkedSpec) {
+      metaStore.specs[specLookupKey] = {
+        ...linkedSpec,
+        requestStatus:
+          linkedSpec.requestStatus === "pending"
+            ? "approved"
+            : linkedSpec.requestStatus,
+        submittedAt: nowIso(),
+        lastSubmissionPreview: submission.slice(0, 180),
+        updatedAt: nowIso(),
+      };
+      persistMetaStore(metaStore);
+    }
 
-  res.json({
-    ok: true,
-    signature,
-    buyer: buyer.toBase58(),
-    jobPda: job.toBase58(),
-    job: serializeJob(account),
-  });
+    res.json({
+      ok: true,
+      signature,
+      buyer: buyer.toBase58(),
+      jobPda: job.toBase58(),
+      job: serializeJob(account),
+    });
   })
 );
 
 app.post(
   "/api/jobs/review",
   wrap(async (req: Request, res: Response) => {
-  const jobId = toBn(req.body.jobId, "jobId");
-  const buyer =
-    req.body.buyer === undefined || req.body.buyer === null || req.body.buyer === ""
-      ? roles.buyer
-      : null;
-  if (!buyer) {
-    throw new Error("custodial /api/jobs/review supports only server buyer. use /api/tx/review for Phantom");
-  }
-  const approve = toBool(req.body.approve, true);
-  const { signature, job } = await client.reviewJob(buyer, roles.operator.publicKey, jobId, approve);
-  const account = await client.fetchJob(roles.buyer.publicKey, jobId);
-  res.json({
-    ok: true,
-    signature,
-    approve,
-    jobPda: job.toBase58(),
-    job: serializeJob(account),
-  });
+    const jobId = toBn(req.body.jobId, "jobId");
+    const buyer =
+      req.body.buyer === undefined ||
+      req.body.buyer === null ||
+      req.body.buyer === ""
+        ? roles.buyer
+        : null;
+    if (!buyer) {
+      throw new Error(
+        "custodial /api/jobs/review supports only server buyer. use /api/tx/review for Phantom"
+      );
+    }
+    const approve = toBool(req.body.approve, true);
+    const { signature, job } = await client.reviewJob(
+      buyer,
+      roles.operator.publicKey,
+      jobId,
+      approve
+    );
+    const account = await client.fetchJob(roles.buyer.publicKey, jobId);
+    res.json({
+      ok: true,
+      signature,
+      approve,
+      jobPda: job.toBase58(),
+      job: serializeJob(account),
+    });
   })
 );
 
 app.post(
   "/api/jobs/timeout",
   wrap(async (req: Request, res: Response) => {
-  const jobId = toBn(req.body.jobId, "jobId");
-  const actorRole = (req.body.actorRole ?? "buyer") as "buyer" | "ops";
-  const buyer =
-    req.body.buyer === undefined || req.body.buyer === null || req.body.buyer === ""
-      ? roles.buyer.publicKey
-      : toPubkey(req.body.buyer, "buyer");
+    const jobId = toBn(req.body.jobId, "jobId");
+    const actorRole = (req.body.actorRole ?? "buyer") as "buyer" | "ops";
+    const buyer =
+      req.body.buyer === undefined ||
+      req.body.buyer === null ||
+      req.body.buyer === ""
+        ? roles.buyer.publicKey
+        : toPubkey(req.body.buyer, "buyer");
 
-  if (actorRole === "buyer" && !buyer.equals(roles.buyer.publicKey)) {
-    throw new Error("buyer timeout for external buyer must use /api/tx/timeout + wallet signature");
-  }
-  const actor = actorRole === "ops" ? roles.ops : roles.buyer;
+    if (actorRole === "buyer" && !buyer.equals(roles.buyer.publicKey)) {
+      throw new Error(
+        "buyer timeout for external buyer must use /api/tx/timeout + wallet signature"
+      );
+    }
+    const actor = actorRole === "ops" ? roles.ops : roles.buyer;
 
-  const { signature, job } = await client.triggerTimeout(actor, buyer, jobId);
-  const account = await client.fetchJob(buyer, jobId);
-  res.json({
-    ok: true,
-    signature,
-    actorRole,
-    buyer: buyer.toBase58(),
-    jobPda: job.toBase58(),
-    job: serializeJob(account),
-  });
+    const { signature, job } = await client.triggerTimeout(actor, buyer, jobId);
+    const account = await client.fetchJob(buyer, jobId);
+    res.json({
+      ok: true,
+      signature,
+      actorRole,
+      buyer: buyer.toBase58(),
+      jobPda: job.toBase58(),
+      job: serializeJob(account),
+    });
   })
 );
 
 app.post(
   "/api/jobs/resolve",
   wrap(async (req: Request, res: Response) => {
-  const jobId = toBn(req.body.jobId, "jobId");
-  const buyer =
-    req.body.buyer === undefined || req.body.buyer === null || req.body.buyer === ""
-      ? roles.buyer.publicKey
-      : toPubkey(req.body.buyer, "buyer");
-  const payoutLamports = toBn(req.body.payoutLamports ?? 0, "payoutLamports");
-  const reason = String(req.body.reason ?? "manual_resolution");
+    const jobId = toBn(req.body.jobId, "jobId");
+    const buyer =
+      req.body.buyer === undefined ||
+      req.body.buyer === null ||
+      req.body.buyer === ""
+        ? roles.buyer.publicKey
+        : toPubkey(req.body.buyer, "buyer");
+    const payoutLamports = toBn(req.body.payoutLamports ?? 0, "payoutLamports");
+    const reason = String(req.body.reason ?? "manual_resolution");
 
-  const { signature, job } = await client.resolveDispute({
-    ops: roles.ops,
-    buyer,
-    operator: roles.operator.publicKey,
-    jobId,
-    payoutLamports,
-    reason,
-  });
-  const account = await client.fetchJob(buyer, jobId);
-  res.json({
-    ok: true,
-    signature,
-    buyer: buyer.toBase58(),
-    reason,
-    jobPda: job.toBase58(),
-    job: serializeJob(account),
-  });
+    const { signature, job } = await client.resolveDispute({
+      ops: roles.ops,
+      buyer,
+      operator: roles.operator.publicKey,
+      jobId,
+      payoutLamports,
+      reason,
+    });
+    const account = await client.fetchJob(buyer, jobId);
+    res.json({
+      ok: true,
+      signature,
+      buyer: buyer.toBase58(),
+      reason,
+      jobPda: job.toBase58(),
+      job: serializeJob(account),
+    });
   })
 );
 
 app.get(
   "/api/jobs/:jobId",
   wrap(async (req: Request, res: Response) => {
-  const jobId = toBn(req.params.jobId, "jobId");
-  const buyerParam = Array.isArray(req.query.buyer) ? req.query.buyer[0] : req.query.buyer;
-  const buyer =
-    buyerParam === undefined || buyerParam === null || buyerParam === ""
-      ? roles.buyer.publicKey
-      : toPubkey(buyerParam, "buyer");
-  const jobPda = client.jobPda(buyer, jobId);
-  const account = await client.fetchJob(buyer, jobId);
-  res.json({
-    ok: true,
-    buyer: buyer.toBase58(),
-    jobPda: jobPda.toBase58(),
-    job: serializeJob(account),
-  });
+    const jobId = toBn(req.params.jobId, "jobId");
+    const buyerParam = Array.isArray(req.query.buyer)
+      ? req.query.buyer[0]
+      : req.query.buyer;
+    const buyer =
+      buyerParam === undefined || buyerParam === null || buyerParam === ""
+        ? roles.buyer.publicKey
+        : toPubkey(buyerParam, "buyer");
+    const jobPda = client.jobPda(buyer, jobId);
+    const account = await client.fetchJob(buyer, jobId);
+    res.json({
+      ok: true,
+      buyer: buyer.toBase58(),
+      jobPda: jobPda.toBase58(),
+      job: serializeJob(account),
+    });
   })
 );
 
 app.get(
   "/api/events/:signature",
   wrap(async (req: Request, res: Response) => {
-  const signature = Array.isArray(req.params.signature)
-    ? req.params.signature[0]
-    : req.params.signature;
-  const events = await client.parseEvents(signature);
-  res.json({
-    ok: true,
-    events: events.map((e) => ({ name: e.name, data: serializeAny(e.data) })),
-  });
+    const signature = Array.isArray(req.params.signature)
+      ? req.params.signature[0]
+      : req.params.signature;
+    const events = await client.parseEvents(signature);
+    res.json({
+      ok: true,
+      events: events.map((e) => ({ name: e.name, data: serializeAny(e.data) })),
+    });
   })
 );
 

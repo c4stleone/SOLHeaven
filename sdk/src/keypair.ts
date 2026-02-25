@@ -6,4 +6,3 @@ export function loadKeypairFromFile(path: string): Keypair {
   const bytes = Uint8Array.from(JSON.parse(raw));
   return Keypair.fromSecretKey(bytes);
 }
-

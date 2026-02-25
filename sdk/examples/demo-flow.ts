@@ -3,6 +3,11 @@ import { homedir } from "os";
 import { join, resolve } from "path";
 import { Keypair } from "@solana/web3.js";
 import * as anchor from "@coral-xyz/anchor";
+import {
+  createMint,
+  getOrCreateAssociatedTokenAccount,
+  mintTo,
+} from "@solana/spl-token";
 import { loadKeypairFromFile, OutcomeEscrowClient } from "../src";
 
 const RPC_URL = process.env.RPC_URL ?? "http://127.0.0.1:8899";
@@ -37,7 +42,47 @@ async function main() {
   await client.airdrop(operator.publicKey, 2);
   await client.airdrop(treasury.publicKey, 2);
 
-  await client.ensureConfig(admin, ops.publicKey, treasury.publicKey);
+  const stableMint = await createMint(
+    client.provider.connection,
+    admin,
+    admin.publicKey,
+    null,
+    6
+  );
+
+  const buyerToken = await getOrCreateAssociatedTokenAccount(
+    client.provider.connection,
+    admin,
+    stableMint,
+    buyer.publicKey
+  );
+  await getOrCreateAssociatedTokenAccount(
+    client.provider.connection,
+    admin,
+    stableMint,
+    operator.publicKey
+  );
+  await getOrCreateAssociatedTokenAccount(
+    client.provider.connection,
+    admin,
+    stableMint,
+    treasury.publicKey
+  );
+  await mintTo(
+    client.provider.connection,
+    admin,
+    stableMint,
+    buyerToken.address,
+    admin,
+    BigInt(2_000_000_000)
+  );
+
+  await client.ensureConfig(
+    admin,
+    ops.publicKey,
+    treasury.publicKey,
+    stableMint
+  );
 
   const jobId = new anchor.BN(Math.floor(Date.now() / 1000));
   const deadlineAt = new anchor.BN(Math.floor(Date.now() / 1000) + 1800);
@@ -76,6 +121,7 @@ async function main() {
   console.log("job.payout", job.payout.toString());
   console.log("job.operatorReceive", job.operatorReceive.toString());
   console.log("job.feeAmount", job.feeAmount.toString());
+  console.log("stableMint", stableMint.toBase58());
 
   const events = await client.parseEvents(reviewed.signature);
   console.log(

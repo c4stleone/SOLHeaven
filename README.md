@@ -1,6 +1,7 @@
 # OutcomeEscrow for MCP Workflows (Anchor MVP)
 
 MCP 기반 에이전트 작업을 `호출 수(pay-per-call)`가 아니라 `결과(outcome)` 기준으로 정산하는 Solana Anchor MVP입니다.
+결제 자산은 로컬에서 발행한 `USDC 모사 SPL 토큰(6 decimals)`을 사용합니다.
 
 - Buyer: MCP 상품 선택 + 성공 기준 등록 + 에스크로 생성/펀딩 + 승인/거절
 - Operator: MCP 연결 관리 + 상품 등록/수정(상품별 agent 가격) + 결과 제출
@@ -55,6 +56,7 @@ flowchart LR
 - 가격 소스:
   - 우선: 선택한 카탈로그 서비스의 `agentPriceLamports`
   - fallback: 운영자 기본 가격(`mcpConnection.priceLamports`)
+- 단위: `USDC base units` (`1 USDC = 1_000_000`)
 - 서버가 `create` 시점에 가격을 최종 강제
 
 ## 4) Sequence Diagram - Happy Path
@@ -159,6 +161,7 @@ sequenceDiagram
   - `POST /api/jobs/resolve`
   - `POST /api/jobs/timeout`
   - `GET /api/jobs/:jobId`
+  - `POST /api/token/faucet` (로컬 데모용 토큰 지급)
 
 ## 8) Repository Structure
 
@@ -187,6 +190,12 @@ outcome-escrow-anchor/
 npm install
 npm run stack:up
 ```
+
+첫 실행 후 `Bootstrap`을 실행하면 아래가 자동으로 준비됩니다.
+- Config PDA 초기화(ops/treasury/stable mint)
+- 로컬 USDC 모사 mint 생성
+- 역할 지갑의 ATA 생성
+- Buyer 지갑으로 데모 토큰 민팅
 
 ### URLs
 - Home: `http://127.0.0.1:8787`

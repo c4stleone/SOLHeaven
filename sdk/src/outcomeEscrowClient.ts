@@ -5,10 +5,17 @@ import {
   Connection,
   Keypair,
   PublicKey,
+  sendAndConfirmTransaction,
   SystemProgram,
   Transaction,
   VersionedTransaction,
 } from "@solana/web3.js";
+import {
+  ASSOCIATED_TOKEN_PROGRAM_ID,
+  TOKEN_PROGRAM_ID,
+  createAssociatedTokenAccountIdempotentInstruction,
+  getAssociatedTokenAddressSync,
+} from "@solana/spl-token";
 import idlJson from "../idl/outcome_escrow_anchor.json";
 
 const CONFIG_SEED = Buffer.from("config");
@@ -114,7 +121,11 @@ export class OutcomeEscrowClient {
     opts: ConfirmOptions = anchor.AnchorProvider.defaultOptions()
   ): OutcomeEscrowClient {
     const connection = new Connection(rpcUrl, opts.commitment ?? "confirmed");
-    const provider = new anchor.AnchorProvider(connection, walletFromKeypair(payer), opts);
+    const provider = new anchor.AnchorProvider(
+      connection,
+      walletFromKeypair(payer),
+      opts
+    );
     const program = new anchor.Program(idlJson as anchor.Idl, provider);
     return new OutcomeEscrowClient(provider, program);
   }
@@ -128,7 +139,10 @@ export class OutcomeEscrowClient {
   }
 
   get configPda(): PublicKey {
-    return PublicKey.findProgramAddressSync([CONFIG_SEED], this.program.programId)[0];
+    return PublicKey.findProgramAddressSync(
+      [CONFIG_SEED],
+      this.program.programId
+    )[0];
   }
 
   jobPda(buyer: PublicKey, jobId: number | bigint | anchor.BN): PublicKey {
@@ -137,6 +151,27 @@ export class OutcomeEscrowClient {
       [JOB_SEED, buyer.toBuffer(), jobIdBn.toArrayLike(Buffer, "le", 8)],
       this.program.programId
     )[0];
+  }
+
+  associatedTokenAddress(
+    mint: PublicKey,
+    owner: PublicKey,
+    allowOwnerOffCurve = false
+  ): PublicKey {
+    return getAssociatedTokenAddressSync(
+      mint,
+      owner,
+      allowOwnerOffCurve,
+      TOKEN_PROGRAM_ID,
+      ASSOCIATED_TOKEN_PROGRAM_ID
+    );
+  }
+
+  private stableMintFromConfig(config: any): PublicKey {
+    if (!config?.stableMint) {
+      throw new Error("config.stableMint is missing");
+    }
+    return config.stableMint as PublicKey;
   }
 
   async airdrop(pubkey: PublicKey, sol = 2): Promise<string> {
@@ -156,24 +191,35 @@ export class OutcomeEscrowClient {
     return this.accounts.job.fetch(this.jobPda(buyer, jobId));
   }
 
-  async initializeConfig(admin: Keypair, ops: PublicKey, treasury: PublicKey) {
+  async initializeConfig(
+    admin: Keypair,
+    ops: PublicKey,
+    treasury: PublicKey,
+    stableMint: PublicKey
+  ) {
     return this.program.methods
       .initializeConfig(ops, treasury)
       .accounts({
         config: this.configPda,
         admin: admin.publicKey,
+        stableMint,
         systemProgram: SystemProgram.programId,
       })
       .signers([admin])
       .rpc();
   }
 
-  async ensureConfig(admin: Keypair, ops: PublicKey, treasury: PublicKey) {
+  async ensureConfig(
+    admin: Keypair,
+    ops: PublicKey,
+    treasury: PublicKey,
+    stableMint: PublicKey
+  ) {
     const exists = await this.fetchConfig();
     if (exists) {
       return null;
     }
-    return this.initializeConfig(admin, ops, treasury);
+    return this.initializeConfig(admin, ops, treasury, stableMint);
   }
 
   async updateOps(admin: Keypair, newOps: PublicKey) {
@@ -230,30 +276,91 @@ export class OutcomeEscrowClient {
   }
 
   async fundJob(buyer: Keypair, jobId: number | bigint | anchor.BN) {
+    const config = await this.fetchConfig();
+    if (!config) {
+      throw new Error("config is not initialized");
+    }
+    const stableMint = this.stableMintFromConfig(config);
     const job = this.jobPda(buyer.publicKey, jobId);
-    const signature = await this.program.methods
+    const buyerToken = this.associatedTokenAddress(stableMint, buyer.publicKey);
+    const jobVault = this.associatedTokenAddress(stableMint, job, true);
+    const fundIx = await this.program.methods
       .fundJob()
       .accounts({
+        config: this.configPda,
         job,
         buyer: buyer.publicKey,
-        systemProgram: SystemProgram.programId,
+        buyerToken,
+        jobVault,
+        tokenProgram: TOKEN_PROGRAM_ID,
       })
-      .signers([buyer])
-      .rpc();
-    return { signature, job };
+      .instruction();
+
+    const tx = new Transaction().add(
+      createAssociatedTokenAccountIdempotentInstruction(
+        buyer.publicKey,
+        buyerToken,
+        buyer.publicKey,
+        stableMint
+      ),
+      createAssociatedTokenAccountIdempotentInstruction(
+        buyer.publicKey,
+        jobVault,
+        job,
+        stableMint
+      ),
+      fundIx
+    );
+    await this.hydrateTransaction(tx, buyer.publicKey);
+
+    const signature = await sendAndConfirmTransaction(
+      this.provider.connection,
+      tx,
+      [buyer],
+      {
+        commitment: "confirmed",
+        skipPreflight: false,
+      }
+    );
+    return { signature, job, buyerToken, jobVault, stableMint };
   }
 
   async buildFundJobTx(buyer: PublicKey, jobId: number | bigint | anchor.BN) {
+    const config = await this.fetchConfig();
+    if (!config) {
+      throw new Error("config is not initialized");
+    }
+    const stableMint = this.stableMintFromConfig(config);
     const job = this.jobPda(buyer, jobId);
-    const tx = await this.program.methods
+    const buyerToken = this.associatedTokenAddress(stableMint, buyer);
+    const jobVault = this.associatedTokenAddress(stableMint, job, true);
+    const fundIx = await this.program.methods
       .fundJob()
       .accounts({
+        config: this.configPda,
         job,
         buyer,
-        systemProgram: SystemProgram.programId,
+        buyerToken,
+        jobVault,
+        tokenProgram: TOKEN_PROGRAM_ID,
       })
-      .transaction();
-    return { tx, job };
+      .instruction();
+    const tx = new Transaction().add(
+      createAssociatedTokenAccountIdempotentInstruction(
+        buyer,
+        buyerToken,
+        buyer,
+        stableMint
+      ),
+      createAssociatedTokenAccountIdempotentInstruction(
+        buyer,
+        jobVault,
+        job,
+        stableMint
+      ),
+      fundIx
+    );
+    return { tx, job, buyerToken, jobVault, stableMint };
   }
 
   async submitResult(
@@ -283,23 +390,78 @@ export class OutcomeEscrowClient {
   ) {
     const config = await this.fetchConfig();
     const treasuryPk = treasury ?? config?.treasury;
-    if (!treasuryPk) {
+    if (!config || !treasuryPk) {
       throw new Error("config is not initialized");
     }
+    const stableMint = this.stableMintFromConfig(config);
 
     const job = this.jobPda(buyer.publicKey, jobId);
-    const signature = await this.program.methods
+    const buyerToken = this.associatedTokenAddress(stableMint, buyer.publicKey);
+    const operatorToken = this.associatedTokenAddress(stableMint, operator);
+    const treasuryToken = this.associatedTokenAddress(stableMint, treasuryPk);
+    const jobVault = this.associatedTokenAddress(stableMint, job, true);
+    const reviewIx = await this.program.methods
       .reviewJob(approve)
       .accounts({
         config: this.configPda,
         job,
         buyer: buyer.publicKey,
         operator,
-        treasury: treasuryPk,
+        jobVault,
+        buyerToken,
+        operatorToken,
+        treasuryToken,
+        tokenProgram: TOKEN_PROGRAM_ID,
       })
-      .signers([buyer])
-      .rpc();
-    return { signature, job };
+      .instruction();
+
+    const tx = new Transaction().add(
+      createAssociatedTokenAccountIdempotentInstruction(
+        buyer.publicKey,
+        buyerToken,
+        buyer.publicKey,
+        stableMint
+      ),
+      createAssociatedTokenAccountIdempotentInstruction(
+        buyer.publicKey,
+        operatorToken,
+        operator,
+        stableMint
+      ),
+      createAssociatedTokenAccountIdempotentInstruction(
+        buyer.publicKey,
+        treasuryToken,
+        treasuryPk,
+        stableMint
+      ),
+      createAssociatedTokenAccountIdempotentInstruction(
+        buyer.publicKey,
+        jobVault,
+        job,
+        stableMint
+      ),
+      reviewIx
+    );
+    await this.hydrateTransaction(tx, buyer.publicKey);
+
+    const signature = await sendAndConfirmTransaction(
+      this.provider.connection,
+      tx,
+      [buyer],
+      {
+        commitment: "confirmed",
+        skipPreflight: false,
+      }
+    );
+    return {
+      signature,
+      job,
+      buyerToken,
+      operatorToken,
+      treasuryToken,
+      jobVault,
+      stableMint,
+    };
   }
 
   async buildReviewJobTx(
@@ -311,22 +473,66 @@ export class OutcomeEscrowClient {
   ) {
     const config = await this.fetchConfig();
     const treasuryPk = treasury ?? config?.treasury;
-    if (!treasuryPk) {
+    if (!config || !treasuryPk) {
       throw new Error("config is not initialized");
     }
+    const stableMint = this.stableMintFromConfig(config);
 
     const job = this.jobPda(buyer, jobId);
-    const tx = await this.program.methods
+    const buyerToken = this.associatedTokenAddress(stableMint, buyer);
+    const operatorToken = this.associatedTokenAddress(stableMint, operator);
+    const treasuryToken = this.associatedTokenAddress(stableMint, treasuryPk);
+    const jobVault = this.associatedTokenAddress(stableMint, job, true);
+    const reviewIx = await this.program.methods
       .reviewJob(approve)
       .accounts({
         config: this.configPda,
         job,
         buyer,
         operator,
-        treasury: treasuryPk,
+        jobVault,
+        buyerToken,
+        operatorToken,
+        treasuryToken,
+        tokenProgram: TOKEN_PROGRAM_ID,
       })
-      .transaction();
-    return { tx, job };
+      .instruction();
+    const tx = new Transaction().add(
+      createAssociatedTokenAccountIdempotentInstruction(
+        buyer,
+        buyerToken,
+        buyer,
+        stableMint
+      ),
+      createAssociatedTokenAccountIdempotentInstruction(
+        buyer,
+        operatorToken,
+        operator,
+        stableMint
+      ),
+      createAssociatedTokenAccountIdempotentInstruction(
+        buyer,
+        treasuryToken,
+        treasuryPk,
+        stableMint
+      ),
+      createAssociatedTokenAccountIdempotentInstruction(
+        buyer,
+        jobVault,
+        job,
+        stableMint
+      ),
+      reviewIx
+    );
+    return {
+      tx,
+      job,
+      buyerToken,
+      operatorToken,
+      treasuryToken,
+      jobVault,
+      stableMint,
+    };
   }
 
   async triggerTimeout(
@@ -369,21 +575,81 @@ export class OutcomeEscrowClient {
     if (!config) {
       throw new Error("config is not initialized");
     }
+    const stableMint = this.stableMintFromConfig(config);
 
     const job = this.jobPda(input.buyer, input.jobId);
-    const signature = await this.program.methods
-      .resolveDispute(bn(input.payoutLamports), input.reason)
-      .accounts({
-        config: this.configPda,
+    const buyerToken = this.associatedTokenAddress(stableMint, input.buyer);
+    const operatorToken = this.associatedTokenAddress(
+      stableMint,
+      input.operator
+    );
+    const treasuryToken = this.associatedTokenAddress(
+      stableMint,
+      config.treasury
+    );
+    const jobVault = this.associatedTokenAddress(stableMint, job, true);
+    const tx = new Transaction().add(
+      createAssociatedTokenAccountIdempotentInstruction(
+        input.ops.publicKey,
+        buyerToken,
+        input.buyer,
+        stableMint
+      ),
+      createAssociatedTokenAccountIdempotentInstruction(
+        input.ops.publicKey,
+        operatorToken,
+        input.operator,
+        stableMint
+      ),
+      createAssociatedTokenAccountIdempotentInstruction(
+        input.ops.publicKey,
+        treasuryToken,
+        config.treasury,
+        stableMint
+      ),
+      createAssociatedTokenAccountIdempotentInstruction(
+        input.ops.publicKey,
+        jobVault,
         job,
-        ops: input.ops.publicKey,
-        buyer: input.buyer,
-        operator: input.operator,
-        treasury: config.treasury,
-      })
-      .signers([input.ops])
-      .rpc();
-    return { signature, job };
+        stableMint
+      ),
+      await this.program.methods
+        .resolveDispute(bn(input.payoutLamports), input.reason)
+        .accounts({
+          config: this.configPda,
+          job,
+          ops: input.ops.publicKey,
+          buyer: input.buyer,
+          operator: input.operator,
+          jobVault,
+          buyerToken,
+          operatorToken,
+          treasuryToken,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .instruction()
+    );
+    await this.hydrateTransaction(tx, input.ops.publicKey);
+
+    const signature = await sendAndConfirmTransaction(
+      this.provider.connection,
+      tx,
+      [input.ops],
+      {
+        commitment: "confirmed",
+        skipPreflight: false,
+      }
+    );
+
+    return {
+      signature,
+      job,
+      buyerToken,
+      operatorToken,
+      treasuryToken,
+      jobVault,
+      stableMint,
+    };
   }
 
   async parseEvents(signature: string) {
@@ -400,12 +666,20 @@ export class OutcomeEscrowClient {
     }
 
     const logs = tx?.meta?.logMessages ?? [];
-    const parser = new anchor.EventParser(this.program.programId, this.program.coder);
+    const parser = new anchor.EventParser(
+      this.program.programId,
+      this.program.coder
+    );
     return [...parser.parseLogs(logs)];
   }
 
-  async hydrateTransaction(tx: Transaction, feePayer: PublicKey): Promise<Transaction> {
-    const latest = await this.provider.connection.getLatestBlockhash("confirmed");
+  async hydrateTransaction(
+    tx: Transaction,
+    feePayer: PublicKey
+  ): Promise<Transaction> {
+    const latest = await this.provider.connection.getLatestBlockhash(
+      "confirmed"
+    );
     tx.feePayer = feePayer;
     tx.recentBlockhash = latest.blockhash;
     return tx;

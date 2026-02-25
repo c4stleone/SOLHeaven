@@ -37,7 +37,9 @@ function renderJson(el, value) {
 }
 
 function normalizeDigits(value, field) {
-  const v = String(value ?? "").trim().replace(/,/g, "");
+  const v = String(value ?? "")
+    .trim()
+    .replace(/,/g, "");
   if (!/^\d+$/.test(v)) {
     throw new Error(`${field}는 숫자만 입력하세요.`);
   }
@@ -64,11 +66,21 @@ function shortKey(key) {
 }
 
 function requestStatusMeta(status) {
-  return REQUEST_STATUS_META[String(status)] || { label: String(status), tone: "muted" };
+  return (
+    REQUEST_STATUS_META[String(status)] || {
+      label: String(status),
+      tone: "muted",
+    }
+  );
 }
 
 function onchainStatusMeta(status) {
-  return ONCHAIN_STATUS_META[Number(status)] || { label: `Unknown(${String(status)})`, tone: "muted" };
+  return (
+    ONCHAIN_STATUS_META[Number(status)] || {
+      label: `Unknown(${String(status)})`,
+      tone: "muted",
+    }
+  );
 }
 
 async function api(path, method = "GET", body) {
@@ -90,9 +102,15 @@ function fillBuyerDefaults(buyer) {
 }
 
 async function refreshPanels() {
-  const [wallets, config] = await Promise.all([api("/api/wallets"), api("/api/config")]);
+  const [wallets, config] = await Promise.all([
+    api("/api/wallets"),
+    api("/api/config"),
+  ]);
   renderJson(walletsView, wallets.roles);
-  renderJson(configView, { configPda: config.configPda, config: config.config });
+  renderJson(configView, {
+    configPda: config.configPda,
+    config: config.config,
+  });
   fillBuyerDefaults(wallets.roles.buyer);
 }
 
@@ -126,7 +144,9 @@ function renderDisputeList() {
   }
 
   for (const req of state.disputes) {
-    const chainMeta = req.job ? onchainStatusMeta(req.job.status) : { label: "No job", tone: "muted" };
+    const chainMeta = req.job
+      ? onchainStatusMeta(req.job.status)
+      : { label: "No job", tone: "muted" };
     const button = document.createElement("button");
     button.type = "button";
     button.className = "job-item";
@@ -139,7 +159,9 @@ function renderDisputeList() {
     const top = document.createElement("div");
     top.className = "job-item-top";
     const title = document.createElement("strong");
-    title.textContent = `#${req.jobId} ${req.taskTitle || req.serviceTitle || ""}`.trim();
+    title.textContent = `#${req.jobId} ${
+      req.taskTitle || req.serviceTitle || ""
+    }`.trim();
     const chip = document.createElement("span");
     chip.className = `status-chip tone-${chainMeta.tone}`;
     chip.textContent = chainMeta.label;
@@ -147,11 +169,15 @@ function renderDisputeList() {
 
     const body = document.createElement("p");
     body.className = "job-item-title";
-    body.textContent = `${req.serviceTitle || "unknown service"} | buyer ${shortKey(req.buyer)}`;
+    body.textContent = `${
+      req.serviceTitle || "unknown service"
+    } | buyer ${shortKey(req.buyer)}`;
 
     const foot = document.createElement("div");
     foot.className = "job-item-foot";
-    foot.textContent = `request ${requestStatusMeta(req.requestStatus).label} | reward ${req.job?.reward || "-"}`;
+    foot.textContent = `request ${
+      requestStatusMeta(req.requestStatus).label
+    } | reward ${req.job?.reward || "-"} base units`;
 
     button.append(top, body, foot);
     disputeListView.appendChild(button);
@@ -165,14 +191,23 @@ function renderDisputeDetail(req) {
   }
   state.currentDispute = req;
   const reqMeta = requestStatusMeta(req.requestStatus);
-  const chainMeta = req.job ? onchainStatusMeta(req.job.status) : { label: "No job", tone: "muted" };
+  const chainMeta = req.job
+    ? onchainStatusMeta(req.job.status)
+    : { label: "No job", tone: "muted" };
 
   $("dispute-detail-job-id").textContent = String(req.jobId || "-");
   $("dispute-detail-buyer").textContent = req.buyer || "-";
   $("dispute-detail-service").textContent = req.serviceTitle || "-";
-  $("dispute-detail-status").textContent = `${reqMeta.label} / on-chain ${chainMeta.label}`;
-  $("dispute-detail-brief").textContent = req.taskBrief || "요청 설명이 없습니다.";
-  $("dispute-detail-criteria").textContent = JSON.stringify(req.criteria || {}, null, 2);
+  $(
+    "dispute-detail-status"
+  ).textContent = `${reqMeta.label} / on-chain ${chainMeta.label}`;
+  $("dispute-detail-brief").textContent =
+    req.taskBrief || "요청 설명이 없습니다.";
+  $("dispute-detail-criteria").textContent = JSON.stringify(
+    req.criteria || {},
+    null,
+    2
+  );
 
   const chip = $("dispute-status-chip");
   chip.className = `status-chip tone-${chainMeta.tone}`;
@@ -193,7 +228,9 @@ async function loadDisputes() {
   const data = await api("/api/operator/requests");
   const all = Array.isArray(data.requests) ? data.requests : [];
   const disputes =
-    mode === "all" ? all : all.filter((r) => r.job && Number(r.job.status) === 3);
+    mode === "all"
+      ? all
+      : all.filter((r) => r.job && Number(r.job.status) === 3);
   state.disputes = disputes;
   renderDisputeList();
 
@@ -244,7 +281,8 @@ async function resolveSelectedDispute(approve) {
     ? normalizeDigits(req.job.reward, "job reward")
     : "0";
   const reasonRaw = String($("dispute-reason").value || "").trim();
-  const reason = reasonRaw || (approve ? "ops_dispute_approved" : "ops_dispute_rejected");
+  const reason =
+    reasonRaw || (approve ? "ops_dispute_approved" : "ops_dispute_rejected");
   const result = await api("/api/jobs/resolve", "POST", {
     buyer: normalizePubkey(req.buyer, "buyer pubkey"),
     jobId: normalizeDigits(req.jobId, "job id"),
@@ -301,7 +339,9 @@ window.addEventListener("DOMContentLoaded", async () => {
   $("btn-fetch-job").addEventListener("click", () =>
     withAction("fetchJob", () => {
       const input = timeoutInput();
-      return api(`/api/jobs/${input.jobId}?buyer=${encodeURIComponent(input.buyer)}`);
+      return api(
+        `/api/jobs/${input.jobId}?buyer=${encodeURIComponent(input.buyer)}`
+      );
     })
   );
 

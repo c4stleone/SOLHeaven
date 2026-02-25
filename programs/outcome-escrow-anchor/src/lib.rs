@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-use anchor_lang::system_program::{transfer, Transfer};
+use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer as TokenTransfer};
 
 declare_id!("vnvjfF6x58KeioKHSszX7PW4PTu2QburPetZVjNL1od");
 
@@ -17,15 +17,18 @@ pub mod outcome_escrow_anchor {
         ops: Pubkey,
         treasury: Pubkey,
     ) -> Result<()> {
+        let stable_mint = ctx.accounts.stable_mint.key();
         let config = &mut ctx.accounts.config;
         config.admin = ctx.accounts.admin.key();
         config.ops = ops;
         config.treasury = treasury;
+        config.stable_mint = stable_mint;
         config.bump = ctx.bumps.config;
         emit!(ConfigInitialized {
             admin: config.admin,
             ops,
             treasury,
+            stable_mint,
             ts: Clock::get()?.unix_timestamp,
         });
         Ok(())
@@ -92,17 +95,17 @@ pub mod outcome_escrow_anchor {
     }
 
     pub fn fund_job(ctx: Context<FundJob>) -> Result<()> {
-        let job_ai = ctx.accounts.job.to_account_info();
         let job_key = ctx.accounts.job.key();
         let job = &mut ctx.accounts.job;
         require!(job.status == JobStatus::Created as u8, ErrorCode::InvalidStatus);
 
-        let cpi_accounts = Transfer {
-            from: ctx.accounts.buyer.to_account_info(),
-            to: job_ai,
+        let cpi_accounts = TokenTransfer {
+            from: ctx.accounts.buyer_token.to_account_info(),
+            to: ctx.accounts.job_vault.to_account_info(),
+            authority: ctx.accounts.buyer.to_account_info(),
         };
-        transfer(
-            CpiContext::new(ctx.accounts.system_program.to_account_info(), cpi_accounts),
+        token::transfer(
+            CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts),
             job.reward,
         )?;
 
@@ -141,9 +144,6 @@ pub mod outcome_escrow_anchor {
 
     pub fn review_job(ctx: Context<ReviewJob>, approve: bool) -> Result<()> {
         let job_ai = ctx.accounts.job.to_account_info();
-        let buyer_ai = ctx.accounts.buyer.to_account_info();
-        let operator_ai = ctx.accounts.operator.to_account_info();
-        let treasury_ai = ctx.accounts.treasury.to_account_info();
         let job_key = ctx.accounts.job.key();
 
         let job = &mut ctx.accounts.job;
@@ -154,9 +154,11 @@ pub mod outcome_escrow_anchor {
             settle_job(
                 job,
                 &job_ai,
-                &buyer_ai,
-                &operator_ai,
-                &treasury_ai,
+                &ctx.accounts.job_vault,
+                &ctx.accounts.buyer_token,
+                &ctx.accounts.operator_token,
+                &ctx.accounts.treasury_token,
+                &ctx.accounts.token_program,
                 job.reward,
                 SettlementReason::BuyerApprove as u8,
             )?;
@@ -211,9 +213,6 @@ pub mod outcome_escrow_anchor {
     ) -> Result<()> {
         require!(reason.len() <= MAX_REASON_LEN, ErrorCode::ReasonTooLong);
         let job_ai = ctx.accounts.job.to_account_info();
-        let buyer_ai = ctx.accounts.buyer.to_account_info();
-        let operator_ai = ctx.accounts.operator.to_account_info();
-        let treasury_ai = ctx.accounts.treasury.to_account_info();
 
         let job = &mut ctx.accounts.job;
         require!(job.status == JobStatus::Disputed as u8, ErrorCode::InvalidStatus);
@@ -221,9 +220,11 @@ pub mod outcome_escrow_anchor {
         settle_job(
             job,
             &job_ai,
-            &buyer_ai,
-            &operator_ai,
-            &treasury_ai,
+            &ctx.accounts.job_vault,
+            &ctx.accounts.buyer_token,
+            &ctx.accounts.operator_token,
+            &ctx.accounts.treasury_token,
+            &ctx.accounts.token_program,
             payout,
             SettlementReason::DisputeResolved as u8,
         )?;
@@ -238,12 +239,14 @@ pub mod outcome_escrow_anchor {
     }
 }
 
-fn settle_job(
-    job: &mut Account<Job>,
-    job_ai: &AccountInfo,
-    buyer_ai: &AccountInfo,
-    operator_ai: &AccountInfo,
-    treasury_ai: &AccountInfo,
+fn settle_job<'info>(
+    job: &mut Account<'info, Job>,
+    job_ai: &AccountInfo<'info>,
+    job_vault: &Account<'info, TokenAccount>,
+    buyer_token: &Account<'info, TokenAccount>,
+    operator_token: &Account<'info, TokenAccount>,
+    treasury_token: &Account<'info, TokenAccount>,
+    token_program: &Program<'info, Token>,
     payout: u64,
     settlement_reason: u8,
 ) -> Result<()> {
@@ -266,11 +269,40 @@ fn settle_job(
         .and_then(|v| v.checked_add(buyer_refund))
         .ok_or(ErrorCode::MathOverflow)?;
     require!(total_out == job.reward, ErrorCode::MathOverflow);
-    require!(job_ai.lamports() >= job.reward, ErrorCode::InsufficientVaultBalance);
+    require!(
+        job_vault.amount >= job.reward,
+        ErrorCode::InsufficientVaultBalance
+    );
 
-    transfer_lamports(job_ai, operator_ai, operator_receive)?;
-    transfer_lamports(job_ai, treasury_ai, fee_amount)?;
-    transfer_lamports(job_ai, buyer_ai, buyer_refund)?;
+    let job_id_bytes = job.job_id.to_le_bytes();
+    let bump_seed = [job.bump];
+    let signer_seed_slices: [&[u8]; 4] = [JOB_SEED, job.buyer.as_ref(), &job_id_bytes, &bump_seed];
+    let signer_seeds: &[&[&[u8]]] = &[&signer_seed_slices];
+
+    transfer_tokens(
+        token_program,
+        &job_vault.to_account_info(),
+        &operator_token.to_account_info(),
+        job_ai,
+        signer_seeds,
+        operator_receive,
+    )?;
+    transfer_tokens(
+        token_program,
+        &job_vault.to_account_info(),
+        &treasury_token.to_account_info(),
+        job_ai,
+        signer_seeds,
+        fee_amount,
+    )?;
+    transfer_tokens(
+        token_program,
+        &job_vault.to_account_info(),
+        &buyer_token.to_account_info(),
+        job_ai,
+        signer_seeds,
+        buyer_refund,
+    )?;
 
     job.status = JobStatus::Settled as u8;
     job.payout = payout;
@@ -283,7 +315,7 @@ fn settle_job(
         job: *job_ai.key,
         buyer: job.buyer,
         operator: job.operator,
-        treasury: *treasury_ai.key,
+        treasury: treasury_token.owner,
         payout,
         fee_amount,
         operator_receive,
@@ -294,19 +326,30 @@ fn settle_job(
     Ok(())
 }
 
-fn transfer_lamports(from: &AccountInfo, to: &AccountInfo, amount: u64) -> Result<()> {
+fn transfer_tokens<'info>(
+    token_program: &Program<'info, Token>,
+    from: &AccountInfo<'info>,
+    to: &AccountInfo<'info>,
+    authority: &AccountInfo<'info>,
+    signer_seeds: &[&[&[u8]]],
+    amount: u64,
+) -> Result<()> {
     if amount == 0 {
         return Ok(());
     }
-    let from_balance = from.lamports();
-    let to_balance = to.lamports();
-    let from_next = from_balance
-        .checked_sub(amount)
-        .ok_or(ErrorCode::InsufficientVaultBalance)?;
-    let to_next = to_balance.checked_add(amount).ok_or(ErrorCode::MathOverflow)?;
-    **from.try_borrow_mut_lamports()? = from_next;
-    **to.try_borrow_mut_lamports()? = to_next;
-    Ok(())
+
+    token::transfer(
+        CpiContext::new_with_signer(
+            token_program.to_account_info(),
+            TokenTransfer {
+                from: from.clone(),
+                to: to.clone(),
+                authority: authority.clone(),
+            },
+            signer_seeds,
+        ),
+        amount,
+    )
 }
 
 #[derive(Accounts)]
@@ -321,6 +364,7 @@ pub struct InitializeConfig<'info> {
     pub config: Account<'info, Config>,
     #[account(mut)]
     pub admin: Signer<'info>,
+    pub stable_mint: Account<'info, Mint>,
     pub system_program: Program<'info, System>,
 }
 
@@ -354,11 +398,25 @@ pub struct CreateJob<'info> {
 
 #[derive(Accounts)]
 pub struct FundJob<'info> {
+    #[account(seeds = [CONFIG_SEED], bump = config.bump)]
+    pub config: Account<'info, Config>,
     #[account(mut, has_one = buyer)]
     pub job: Account<'info, Job>,
     #[account(mut)]
     pub buyer: Signer<'info>,
-    pub system_program: Program<'info, System>,
+    #[account(
+        mut,
+        constraint = buyer_token.owner == buyer.key() @ ErrorCode::InvalidTokenOwner,
+        constraint = buyer_token.mint == config.stable_mint @ ErrorCode::InvalidTokenMint
+    )]
+    pub buyer_token: Account<'info, TokenAccount>,
+    #[account(
+        mut,
+        constraint = job_vault.owner == job.key() @ ErrorCode::InvalidTokenOwner,
+        constraint = job_vault.mint == config.stable_mint @ ErrorCode::InvalidTokenMint
+    )]
+    pub job_vault: Account<'info, TokenAccount>,
+    pub token_program: Program<'info, Token>,
 }
 
 #[derive(Accounts)]
@@ -377,11 +435,33 @@ pub struct ReviewJob<'info> {
     #[account(mut)]
     pub buyer: Signer<'info>,
     /// CHECK: checked against job.operator
-    #[account(mut, address = job.operator)]
+    #[account(address = job.operator)]
     pub operator: UncheckedAccount<'info>,
-    /// CHECK: checked against config.treasury
-    #[account(mut, address = config.treasury)]
-    pub treasury: UncheckedAccount<'info>,
+    #[account(
+        mut,
+        constraint = job_vault.owner == job.key() @ ErrorCode::InvalidTokenOwner,
+        constraint = job_vault.mint == config.stable_mint @ ErrorCode::InvalidTokenMint
+    )]
+    pub job_vault: Account<'info, TokenAccount>,
+    #[account(
+        mut,
+        constraint = buyer_token.owner == buyer.key() @ ErrorCode::InvalidTokenOwner,
+        constraint = buyer_token.mint == config.stable_mint @ ErrorCode::InvalidTokenMint
+    )]
+    pub buyer_token: Account<'info, TokenAccount>,
+    #[account(
+        mut,
+        constraint = operator_token.owner == operator.key() @ ErrorCode::InvalidTokenOwner,
+        constraint = operator_token.mint == config.stable_mint @ ErrorCode::InvalidTokenMint
+    )]
+    pub operator_token: Account<'info, TokenAccount>,
+    #[account(
+        mut,
+        constraint = treasury_token.owner == config.treasury @ ErrorCode::InvalidTokenOwner,
+        constraint = treasury_token.mint == config.stable_mint @ ErrorCode::InvalidTokenMint
+    )]
+    pub treasury_token: Account<'info, TokenAccount>,
+    pub token_program: Program<'info, Token>,
 }
 
 #[derive(Accounts)]
@@ -395,7 +475,7 @@ pub struct TriggerTimeout<'info> {
 
 #[derive(Accounts)]
 pub struct ResolveDispute<'info> {
-    #[account(seeds = [CONFIG_SEED], bump = config.bump, has_one = ops, has_one = treasury)]
+    #[account(seeds = [CONFIG_SEED], bump = config.bump, has_one = ops)]
     pub config: Account<'info, Config>,
     #[account(mut, has_one = buyer, has_one = operator)]
     pub job: Account<'info, Job>,
@@ -406,9 +486,31 @@ pub struct ResolveDispute<'info> {
     /// CHECK: checked by has_one
     #[account(mut)]
     pub operator: UncheckedAccount<'info>,
-    /// CHECK: checked by has_one
-    #[account(mut)]
-    pub treasury: UncheckedAccount<'info>,
+    #[account(
+        mut,
+        constraint = job_vault.owner == job.key() @ ErrorCode::InvalidTokenOwner,
+        constraint = job_vault.mint == config.stable_mint @ ErrorCode::InvalidTokenMint
+    )]
+    pub job_vault: Account<'info, TokenAccount>,
+    #[account(
+        mut,
+        constraint = buyer_token.owner == buyer.key() @ ErrorCode::InvalidTokenOwner,
+        constraint = buyer_token.mint == config.stable_mint @ ErrorCode::InvalidTokenMint
+    )]
+    pub buyer_token: Account<'info, TokenAccount>,
+    #[account(
+        mut,
+        constraint = operator_token.owner == operator.key() @ ErrorCode::InvalidTokenOwner,
+        constraint = operator_token.mint == config.stable_mint @ ErrorCode::InvalidTokenMint
+    )]
+    pub operator_token: Account<'info, TokenAccount>,
+    #[account(
+        mut,
+        constraint = treasury_token.owner == config.treasury @ ErrorCode::InvalidTokenOwner,
+        constraint = treasury_token.mint == config.stable_mint @ ErrorCode::InvalidTokenMint
+    )]
+    pub treasury_token: Account<'info, TokenAccount>,
+    pub token_program: Program<'info, Token>,
 }
 
 #[account]
@@ -416,11 +518,12 @@ pub struct Config {
     pub admin: Pubkey,
     pub ops: Pubkey,
     pub treasury: Pubkey,
+    pub stable_mint: Pubkey,
     pub bump: u8,
 }
 
 impl Config {
-    pub const SPACE: usize = 32 + 32 + 32 + 1;
+    pub const SPACE: usize = 32 + 32 + 32 + 32 + 1;
 }
 
 #[account]
@@ -473,6 +576,7 @@ pub struct ConfigInitialized {
     pub admin: Pubkey,
     pub ops: Pubkey,
     pub treasury: Pubkey,
+    pub stable_mint: Pubkey,
     pub ts: i64,
 }
 
@@ -569,4 +673,8 @@ pub enum ErrorCode {
     InvalidDeadline,
     #[msg("Dispute reason is too long.")]
     ReasonTooLong,
+    #[msg("Invalid token mint.")]
+    InvalidTokenMint,
+    #[msg("Invalid token owner.")]
+    InvalidTokenOwner,
 }

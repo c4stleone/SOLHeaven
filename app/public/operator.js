@@ -47,7 +47,9 @@ function renderJson(el, value) {
 }
 
 function normalizeDigits(value, field) {
-  const v = String(value ?? "").trim().replace(/,/g, "");
+  const v = String(value ?? "")
+    .trim()
+    .replace(/,/g, "");
   if (!/^\d+$/.test(v)) {
     throw new Error(`${field}는 숫자만 입력하세요.`);
   }
@@ -74,11 +76,21 @@ function shortKey(key) {
 }
 
 function requestStatusMeta(status) {
-  return REQUEST_STATUS_META[String(status)] || { label: String(status), tone: "muted" };
+  return (
+    REQUEST_STATUS_META[String(status)] || {
+      label: String(status),
+      tone: "muted",
+    }
+  );
 }
 
 function onchainStatusMeta(status) {
-  return ONCHAIN_STATUS_META[Number(status)] || { label: `Unknown(${String(status)})`, tone: "muted" };
+  return (
+    ONCHAIN_STATUS_META[Number(status)] || {
+      label: `Unknown(${String(status)})`,
+      tone: "muted",
+    }
+  );
 }
 
 function setBusy(busy) {
@@ -102,16 +114,24 @@ async function api(path, method = "GET", body) {
 }
 
 async function refreshPanels() {
-  const [wallets, config] = await Promise.all([api("/api/wallets"), api("/api/config")]);
+  const [wallets, config] = await Promise.all([
+    api("/api/wallets"),
+    api("/api/config"),
+  ]);
   renderJson(walletsView, wallets.roles);
-  renderJson(configView, { configPda: config.configPda, config: config.config });
+  renderJson(configView, {
+    configPda: config.configPda,
+    config: config.config,
+  });
 }
 
 function renderMetrics() {
   $("metric-total").textContent = String(state.metrics.total || 0);
   $("metric-pending").textContent = String(state.metrics.pending || 0);
   $("metric-approved").textContent = String(state.metrics.approved || 0);
-  $("metric-submitted").textContent = String(state.metrics.submittedOnChain || 0);
+  $("metric-submitted").textContent = String(
+    state.metrics.submittedOnChain || 0
+  );
 }
 
 function renderMcpConnection(data) {
@@ -133,8 +153,8 @@ function renderMcpConnection(data) {
     status === "ok"
       ? "Connected"
       : status === "error"
-        ? "Connection Error"
-        : "Not connected";
+      ? "Connection Error"
+      : "Not connected";
 
   const active = document.activeElement ? document.activeElement.id : "";
   const editing =
@@ -149,7 +169,8 @@ function renderMcpConnection(data) {
     $("mcp-health-path").value = connection.healthPath || "/health";
     $("mcp-price-lamports").value = connection.priceLamports || "1000000";
     if (!$("catalog-agent-price-lamports").value) {
-      $("catalog-agent-price-lamports").value = connection.priceLamports || "1000000";
+      $("catalog-agent-price-lamports").value =
+        connection.priceLamports || "1000000";
     }
   }
 
@@ -202,7 +223,9 @@ function renderCatalog() {
 
     const foot = document.createElement("div");
     foot.className = "job-item-foot";
-    foot.textContent = `${svc.id} | ${svc.category} | ${svc.agentPriceLamports || "-"} lamports`;
+    foot.textContent = `${svc.id} | ${svc.category} | ${
+      svc.agentPriceLamports || "-"
+    } base units`;
 
     button.append(top, summary, foot);
     wrap.appendChild(button);
@@ -223,7 +246,9 @@ function renderRequestList() {
 
   for (const req of state.requests) {
     const reqMeta = requestStatusMeta(req.requestStatus);
-    const chainMeta = req.job ? onchainStatusMeta(req.job.status) : { label: "No job", tone: "muted" };
+    const chainMeta = req.job
+      ? onchainStatusMeta(req.job.status)
+      : { label: "No job", tone: "muted" };
 
     const button = document.createElement("button");
     button.type = "button";
@@ -280,15 +305,23 @@ function renderDetail(req) {
 
   state.currentRequest = req;
   const reqMeta = requestStatusMeta(req.requestStatus);
-  const chainMeta = req.job ? onchainStatusMeta(req.job.status) : { label: "No job", tone: "muted" };
+  const chainMeta = req.job
+    ? onchainStatusMeta(req.job.status)
+    : { label: "No job", tone: "muted" };
 
   $("detail-job-id").textContent = String(req.jobId || "-");
   $("detail-buyer").textContent = req.buyer || "-";
   $("detail-service").textContent = req.serviceTitle || "-";
-  $("detail-request-status").textContent = `${reqMeta.label} / on-chain ${chainMeta.label}`;
+  $(
+    "detail-request-status"
+  ).textContent = `${reqMeta.label} / on-chain ${chainMeta.label}`;
 
   $("detail-brief").textContent = req.taskBrief || "요청 설명이 없습니다.";
-  $("detail-criteria").textContent = JSON.stringify(req.criteria || {}, null, 2);
+  $("detail-criteria").textContent = JSON.stringify(
+    req.criteria || {},
+    null,
+    2
+  );
 
   const chip = $("request-status-chip");
   chip.className = `status-chip tone-${reqMeta.tone}`;
@@ -296,7 +329,8 @@ function renderDetail(req) {
 
   $("operator-buyer").value = req.buyer || "";
   $("operator-job-id").value = req.jobId || "";
-  $("operator-submission").value = req.lastSubmissionPreview || "operator outcome payload";
+  $("operator-submission").value =
+    req.lastSubmissionPreview || "operator outcome payload";
 
   renderJson(jobView, req.job || { message: "on-chain job not found" });
 }
@@ -318,7 +352,9 @@ function mcpPayloadFromForm() {
     name: String($("mcp-name").value || "").trim(),
     serverUrl: String($("mcp-server-url").value || "").trim(),
     healthPath: String($("mcp-health-path").value || "").trim() || "/health",
-    priceLamports: rawPrice ? normalizeDigits(rawPrice, "mcp price") : fallbackPrice,
+    priceLamports: rawPrice
+      ? normalizeDigits(rawPrice, "mcp price")
+      : fallbackPrice,
   };
   const token = String($("mcp-auth-token").value || "").trim();
   return token ? { ...payload, authToken: token } : payload;
@@ -345,7 +381,9 @@ async function loadRequests() {
   renderRequestList();
 
   if (state.currentRequest) {
-    const found = state.requests.find((r) => r.key === state.currentRequest.key);
+    const found = state.requests.find(
+      (r) => r.key === state.currentRequest.key
+    );
     renderDetail(found || state.requests[0] || null);
   } else {
     renderDetail(state.requests[0] || null);
@@ -376,20 +414,34 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   await withAction("health", () => api("/api/health"));
   await withAction("refresh", async () => {
-    await Promise.all([refreshPanels(), loadCatalog(), loadRequests(), loadMcpConnection()]);
+    await Promise.all([
+      refreshPanels(),
+      loadCatalog(),
+      loadRequests(),
+      loadMcpConnection(),
+    ]);
     return { ok: true };
   });
 
   $("btn-refresh").addEventListener("click", () =>
     withAction("refresh", async () => {
-      await Promise.all([refreshPanels(), loadCatalog(), loadRequests(), loadMcpConnection()]);
+      await Promise.all([
+        refreshPanels(),
+        loadCatalog(),
+        loadRequests(),
+        loadMcpConnection(),
+      ]);
       return { ok: true };
     })
   );
 
   $("btn-mcp-save").addEventListener("click", () =>
     withAction("saveMcpConnection", async () => {
-      const result = await api("/api/operator/mcp", "POST", mcpPayloadFromForm());
+      const result = await api(
+        "/api/operator/mcp",
+        "POST",
+        mcpPayloadFromForm()
+      );
       renderMcpConnection(result);
       return result;
     })
@@ -467,7 +519,9 @@ window.addEventListener("DOMContentLoaded", async () => {
       const payload = {
         buyer: normalizePubkey($("operator-buyer").value, "buyer pubkey"),
         jobId: normalizeDigits($("operator-job-id").value, "job id"),
-        submission: String($("operator-submission").value || "").trim() || "operator outcome payload",
+        submission:
+          String($("operator-submission").value || "").trim() ||
+          "operator outcome payload",
       };
       const result = await api("/api/jobs/submit", "POST", payload);
       await loadRequests();
@@ -478,7 +532,9 @@ window.addEventListener("DOMContentLoaded", async () => {
   $("form-catalog").addEventListener("submit", (e) => {
     e.preventDefault();
     withAction("saveCatalog", async () => {
-      const rawAgentPrice = String($("catalog-agent-price-lamports").value || "").trim();
+      const rawAgentPrice = String(
+        $("catalog-agent-price-lamports").value || ""
+      ).trim();
       const fallbackAgentPrice =
         state.mcpConnection && state.mcpConnection.priceLamports
           ? String(state.mcpConnection.priceLamports)
@@ -514,6 +570,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     $("catalog-summary").value = found.summary;
     $("catalog-category").value = found.category;
     $("catalog-output-format").value = found.outputFormat;
-    $("catalog-agent-price-lamports").value = found.agentPriceLamports || "1000000";
+    $("catalog-agent-price-lamports").value =
+      found.agentPriceLamports || "1000000";
   });
 });

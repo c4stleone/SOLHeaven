@@ -11,7 +11,8 @@ const productGrid = $("product-grid");
 const marketSearch = $("market-search");
 const marketCategory = $("market-category");
 
-const LAMPORTS_PER_SOL = 1_000_000_000n;
+const STABLE_BASE_UNITS = 1_000_000n;
+const STABLE_SYMBOL = "USDC";
 const STORAGE_RECENT_JOBS = "oe_recent_jobs_v2";
 const STORAGE_JOB_META = "oe_job_meta_v1";
 
@@ -103,7 +104,9 @@ function renderActivity() {
 
   for (const entry of state.activity) {
     const item = document.createElement("article");
-    item.className = `activity-item tone-${entry.tone === "error" ? "disputed" : "muted"}`;
+    item.className = `activity-item tone-${
+      entry.tone === "error" ? "disputed" : "muted"
+    }`;
 
     const head = document.createElement("div");
     head.className = "activity-head";
@@ -131,7 +134,9 @@ function renderJson(el, value) {
 }
 
 function normalizeDigits(value, field) {
-  const v = String(value ?? "").trim().replace(/,/g, "");
+  const v = String(value ?? "")
+    .trim()
+    .replace(/,/g, "");
   if (!/^\d+$/.test(v)) {
     throw new Error(`${field}는 숫자만 입력하세요.`);
   }
@@ -159,17 +164,19 @@ function toBigInt(value) {
 }
 
 function lamportsToSolText(value) {
-  const lamports = toBigInt(value);
-  const whole = lamports / LAMPORTS_PER_SOL;
-  const fractional = (lamports % LAMPORTS_PER_SOL)
+  const units = toBigInt(value);
+  const whole = units / STABLE_BASE_UNITS;
+  const fractional = (units % STABLE_BASE_UNITS)
     .toString()
-    .padStart(9, "0")
+    .padStart(6, "0")
     .slice(0, 4);
   return `${whole}.${fractional}`;
 }
 
 function lamportsLabel(value) {
-  return `${lamportsToSolText(value)} SOL (${String(value)} lamports)`;
+  return `${lamportsToSolText(value)} ${STABLE_SYMBOL} (${String(
+    value
+  )} base units)`;
 }
 
 function formatUnixTs(value) {
@@ -203,7 +210,11 @@ function statusMeta(status) {
 }
 
 function getProvider() {
-  if (window.phantom && window.phantom.solana && window.phantom.solana.isPhantom) {
+  if (
+    window.phantom &&
+    window.phantom.solana &&
+    window.phantom.solana.isPhantom
+  ) {
     return window.phantom.solana;
   }
   if (window.solana && window.solana.isPhantom) {
@@ -213,7 +224,9 @@ function getProvider() {
 }
 
 function base64ToBytes(base64) {
-  const raw = String(base64 ?? "").trim().replace(/\r|\n/g, "");
+  const raw = String(base64 ?? "")
+    .trim()
+    .replace(/\r|\n/g, "");
   const normalized = raw.replace(/-/g, "+").replace(/_/g, "/");
   const padded =
     normalized.length % 4 === 0
@@ -257,7 +270,9 @@ function renderPhantom(extra) {
 
   chip.className = `status-chip ${connected ? "tone-funded" : "tone-muted"}`;
   chip.textContent = connected ? "Connected" : "Disconnected";
-  address.textContent = connected ? `${shortPubkey(state.buyer)} (${state.buyer})` : "Phantom 연결 필요";
+  address.textContent = connected
+    ? `${shortPubkey(state.buyer)} (${state.buyer})`
+    : "Phantom 연결 필요";
 
   renderJson(phantomView, {
     available: Boolean(getProvider()),
@@ -301,7 +316,9 @@ function upsertRecentJob(job) {
   }
 
   const key = `${job.buyer}:${job.jobId}`;
-  const idx = state.recentJobs.findIndex((it) => `${it.buyer}:${it.jobId}` === key);
+  const idx = state.recentJobs.findIndex(
+    (it) => `${it.buyer}:${it.jobId}` === key
+  );
   const merged = {
     ...(idx >= 0 ? state.recentJobs[idx] : {}),
     ...job,
@@ -315,7 +332,9 @@ function upsertRecentJob(job) {
     state.recentJobs.push(merged);
   }
 
-  state.recentJobs.sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
+  state.recentJobs.sort(
+    (a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0)
+  );
   state.recentJobs = state.recentJobs.slice(0, 30);
   persistRecentJobs();
 }
@@ -366,7 +385,10 @@ function renderRecentJobs() {
     card.className = "job-item";
     card.dataset.jobId = String(item.jobId);
 
-    if (state.currentJob && String(state.currentJob.jobId) === String(item.jobId)) {
+    if (
+      state.currentJob &&
+      String(state.currentJob.jobId) === String(item.jobId)
+    ) {
       card.classList.add("active");
     }
 
@@ -392,7 +414,9 @@ function renderRecentJobs() {
 
     const foot = document.createElement("div");
     foot.className = "job-item-foot";
-    foot.textContent = `${lamportsToSolText(item.reward)} SOL | updated ${formatUnixTs(item.updatedAt)}`;
+    foot.textContent = `${lamportsToSolText(
+      item.reward
+    )} ${STABLE_SYMBOL} | updated ${formatUnixTs(item.updatedAt)}`;
 
     card.append(top, title, foot);
     wrap.appendChild(card);
@@ -435,7 +459,9 @@ function renderCurrentJob() {
   $("summary-reward").textContent = lamportsLabel(job.reward);
   $("summary-deadline").textContent = formatUnixTs(job.deadlineAt);
   $("summary-updated").textContent = formatUnixTs(job.updatedAt);
-  $("summary-operator-receive").textContent = lamportsLabel(job.operatorReceive);
+  $("summary-operator-receive").textContent = lamportsLabel(
+    job.operatorReceive
+  );
   $("summary-buyer-refund").textContent = lamportsLabel(job.buyerRefund);
 
   const chip = $("job-status-chip");
@@ -469,7 +495,9 @@ function suggestedRewardLamports() {
 
 function serviceRewardLamports(service) {
   const candidate =
-    service && service.agentPriceLamports !== undefined && service.agentPriceLamports !== null
+    service &&
+    service.agentPriceLamports !== undefined &&
+    service.agentPriceLamports !== null
       ? String(service.agentPriceLamports)
       : String(state.operatorPriceLamports || "");
   const price = candidate.trim().replace(/,/g, "");
@@ -481,7 +509,9 @@ function serviceRewardLamports(service) {
 
 function selectedService() {
   const hiddenInput = $("create-service-id");
-  const serviceId = String(hiddenInput.value || state.selectedServiceId || "").trim();
+  const serviceId = String(
+    hiddenInput.value || state.selectedServiceId || ""
+  ).trim();
   if (!serviceId) {
     return null;
   }
@@ -491,13 +521,17 @@ function selectedService() {
 function criteriaFromForm() {
   return {
     minPages: numberOrZero($("criteria-min-pages").value, "최소 페이지 수"),
-    minSourceLinks: numberOrZero($("criteria-min-source-links").value, "최소 출처 링크 수"),
+    minSourceLinks: numberOrZero(
+      $("criteria-min-source-links").value,
+      "최소 출처 링크 수"
+    ),
     minTrustedDomainRatio: Math.min(
       100,
       numberOrZero($("criteria-min-trusted-ratio").value, "신뢰도 도메인 비율")
     ),
     requireTableOrChart: $("criteria-require-chart").checked,
-    requiredFormat: String($("criteria-required-format").value || "PDF").trim() || "PDF",
+    requiredFormat:
+      String($("criteria-required-format").value || "PDF").trim() || "PDF",
     requiredQuestions: String($("criteria-required-questions").value || "")
       .split("\n")
       .map((v) => v.trim())
@@ -507,7 +541,9 @@ function criteriaFromForm() {
 }
 
 function renderMarketCategoryOptions(services) {
-  const categories = [...new Set(services.map((svc) => String(svc.category || "general").trim()))]
+  const categories = [
+    ...new Set(services.map((svc) => String(svc.category || "general").trim())),
+  ]
     .filter((v) => Boolean(v))
     .sort((a, b) => a.localeCompare(b));
 
@@ -535,18 +571,22 @@ function renderMarketCategoryOptions(services) {
 }
 
 function filteredServices() {
-  const query = String(state.serviceFilter.query || "").trim().toLowerCase();
+  const query = String(state.serviceFilter.query || "")
+    .trim()
+    .toLowerCase();
   const category = String(state.serviceFilter.category || "").trim();
   return state.services.filter((svc) => {
-    const matchedCategory = !category || String(svc.category || "") === category;
+    const matchedCategory =
+      !category || String(svc.category || "") === category;
     if (!matchedCategory) {
       return false;
     }
     if (!query) {
       return true;
     }
-    const text = `${svc.title || ""} ${svc.summary || ""} ${svc.category || ""} ${svc.outputFormat || ""}`
-      .toLowerCase();
+    const text = `${svc.title || ""} ${svc.summary || ""} ${
+      svc.category || ""
+    } ${svc.outputFormat || ""}`.toLowerCase();
     return text.includes(query);
   });
 }
@@ -583,7 +623,7 @@ function renderSelectedServiceBox() {
   serviceId.className = "status-chip tone-muted";
   serviceId.textContent = `ID ${svc.id}`;
   price.className = "status-chip tone-submitted";
-  price.textContent = `가격 ${serviceRewardLamports(svc)} lamports`;
+  price.textContent = `가격 ${serviceRewardLamports(svc)} base units`;
 }
 
 function renderProductGrid() {
@@ -650,7 +690,7 @@ function renderProductGrid() {
     provider.textContent = "Operator Verified";
 
     const reward = document.createElement("strong");
-    reward.textContent = `운영자 가격 ${serviceRewardLamports(svc)} lamports`;
+    reward.textContent = `운영자 가격 ${serviceRewardLamports(svc)} base units`;
 
     meta.append(category, provider, reward);
     card.append(head, title, summary, meta);
@@ -673,7 +713,9 @@ function selectService(serviceId, useSuggestion = true) {
 }
 
 function renderServiceOptions(services) {
-  const previous = String(state.selectedServiceId || $("create-service-id").value || "").trim();
+  const previous = String(
+    state.selectedServiceId || $("create-service-id").value || ""
+  ).trim();
   renderMarketCategoryOptions(services);
   if (previous && services.some((svc) => svc.id === previous)) {
     state.selectedServiceId = previous;
@@ -708,18 +750,24 @@ function applyServiceSuggestion() {
 
 async function loadCatalog() {
   const data = await api("/api/operator/catalog");
-  const priceRaw = String(data.operatorPriceLamports ?? state.operatorPriceLamports)
+  const priceRaw = String(
+    data.operatorPriceLamports ?? state.operatorPriceLamports
+  )
     .trim()
     .replace(/,/g, "");
   state.operatorPriceLamports = /^\d+$/.test(priceRaw) ? priceRaw : "1000000";
   state.services = Array.isArray(data.services)
     ? data.services.map((svc) => {
-        const raw = String(svc.agentPriceLamports ?? state.operatorPriceLamports)
+        const raw = String(
+          svc.agentPriceLamports ?? state.operatorPriceLamports
+        )
           .trim()
           .replace(/,/g, "");
         return {
           ...svc,
-          agentPriceLamports: /^\d+$/.test(raw) ? raw : state.operatorPriceLamports,
+          agentPriceLamports: /^\d+$/.test(raw)
+            ? raw
+            : state.operatorPriceLamports,
         };
       })
     : [];
@@ -773,9 +821,15 @@ async function api(path, method = "GET", body) {
 }
 
 async function refreshPanels() {
-  const [wallets, config] = await Promise.all([api("/api/wallets"), api("/api/config")]);
+  const [wallets, config] = await Promise.all([
+    api("/api/wallets"),
+    api("/api/config"),
+  ]);
   renderJson(walletsView, wallets.roles);
-  renderJson(configView, { configPda: config.configPda, config: config.config });
+  renderJson(configView, {
+    configPda: config.configPda,
+    config: config.config,
+  });
 }
 
 async function fetchJobBundle(jobId) {
@@ -825,7 +879,10 @@ async function withAction(name, fn) {
     const result = await fn();
     appendLog(name, result, "ok");
 
-    if (result && (result.job || Object.prototype.hasOwnProperty.call(result, "spec"))) {
+    if (
+      result &&
+      (result.job || Object.prototype.hasOwnProperty.call(result, "spec"))
+    ) {
       ingestJobBundle({ job: result.job, spec: result.spec });
     }
     if (result && result.jobId) {
@@ -917,7 +974,9 @@ window.addEventListener("DOMContentLoaded", async () => {
   });
 
   $("btn-phantom-connect").addEventListener("click", () =>
-    withAction("phantomConnect", async () => ({ buyer: await connectPhantom() }))
+    withAction("phantomConnect", async () => ({
+      buyer: await connectPhantom(),
+    }))
   );
 
   $("btn-phantom-disconnect").addEventListener("click", () =>
@@ -931,21 +990,28 @@ window.addEventListener("DOMContentLoaded", async () => {
     e.preventDefault();
     withAction("createJob", async () => {
       const inputJobId = $("create-job-id").value.trim();
-      const jobId = inputJobId ? normalizeDigits(inputJobId, "job id") : undefined;
+      const jobId = inputJobId
+        ? normalizeDigits(inputJobId, "job id")
+        : undefined;
       const title = $("create-title").value.trim();
       const brief = $("create-brief").value.trim();
       const autoFund = $("create-auto-fund").checked;
       const service = selectedService();
       if (!service) {
-        throw new Error("선택 가능한 MCP 서비스가 없습니다. 운영자가 상품을 등록했는지 확인하세요.");
+        throw new Error(
+          "선택 가능한 MCP 서비스가 없습니다. 운영자가 상품을 등록했는지 확인하세요."
+        );
       }
 
-  const payload = {
+      const payload = {
         jobId,
         serviceId: service.id,
         rewardLamports: suggestedRewardLamports(),
         feeBps: Number($("create-fee-bps").value || 100),
-        deadlineSeconds: normalizeDigits($("create-deadline-seconds").value, "deadline"),
+        deadlineSeconds: normalizeDigits(
+          $("create-deadline-seconds").value,
+          "deadline"
+        ),
       };
 
       const created = await signAndSend("/api/tx/create", payload);
@@ -962,7 +1028,9 @@ window.addEventListener("DOMContentLoaded", async () => {
 
       let fundResult = null;
       if (autoFund) {
-        fundResult = await signAndSend("/api/tx/fund", { jobId: created.jobId });
+        fundResult = await signAndSend("/api/tx/fund", {
+          jobId: created.jobId,
+        });
       }
 
       const fetched = await fetchJobBundle(created.jobId);
@@ -990,7 +1058,10 @@ window.addEventListener("DOMContentLoaded", async () => {
   $("btn-approve").addEventListener("click", () =>
     withAction("approveJob", async () => {
       const jobId = requiredJobId();
-      const txResult = await signAndSend("/api/tx/review", { jobId, approve: true });
+      const txResult = await signAndSend("/api/tx/review", {
+        jobId,
+        approve: true,
+      });
       const fetched = await fetchJobBundle(jobId);
       return { ...txResult, jobId, job: fetched.job, spec: fetched.spec };
     })
@@ -999,7 +1070,10 @@ window.addEventListener("DOMContentLoaded", async () => {
   $("btn-reject").addEventListener("click", () =>
     withAction("rejectJob", async () => {
       const jobId = requiredJobId();
-      const txResult = await signAndSend("/api/tx/review", { jobId, approve: false });
+      const txResult = await signAndSend("/api/tx/review", {
+        jobId,
+        approve: false,
+      });
       const fetched = await fetchJobBundle(jobId);
       return { ...txResult, jobId, job: fetched.job, spec: fetched.spec };
     })

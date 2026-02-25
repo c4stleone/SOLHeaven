@@ -109,6 +109,24 @@
       ],
       "accounts": [
         {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
           "name": "job",
           "writable": true
         },
@@ -121,8 +139,16 @@
           ]
         },
         {
-          "name": "system_program",
-          "address": "11111111111111111111111111111111"
+          "name": "buyer_token",
+          "writable": true
+        },
+        {
+          "name": "job_vault",
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
         }
       ],
       "args": []
@@ -163,6 +189,9 @@
           "name": "admin",
           "writable": true,
           "signer": true
+        },
+        {
+          "name": "stable_mint"
         },
         {
           "name": "system_program",
@@ -237,11 +266,24 @@
           ]
         },
         {
-          "name": "treasury",
-          "writable": true,
-          "relations": [
-            "config"
-          ]
+          "name": "job_vault",
+          "writable": true
+        },
+        {
+          "name": "buyer_token",
+          "writable": true
+        },
+        {
+          "name": "operator_token",
+          "writable": true
+        },
+        {
+          "name": "treasury_token",
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
         }
       ],
       "args": [
@@ -299,12 +341,27 @@
           ]
         },
         {
-          "name": "operator",
+          "name": "operator"
+        },
+        {
+          "name": "job_vault",
           "writable": true
         },
         {
-          "name": "treasury",
+          "name": "buyer_token",
           "writable": true
+        },
+        {
+          "name": "operator_token",
+          "writable": true
+        },
+        {
+          "name": "treasury_token",
+          "writable": true
+        },
+        {
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
         }
       ],
       "args": [
@@ -630,6 +687,16 @@
       "code": 6010,
       "name": "ReasonTooLong",
       "msg": "Dispute reason is too long."
+    },
+    {
+      "code": 6011,
+      "name": "InvalidTokenMint",
+      "msg": "Invalid token mint."
+    },
+    {
+      "code": 6012,
+      "name": "InvalidTokenOwner",
+      "msg": "Invalid token owner."
     }
   ],
   "types": [
@@ -648,6 +715,10 @@
           },
           {
             "name": "treasury",
+            "type": "pubkey"
+          },
+          {
+            "name": "stable_mint",
             "type": "pubkey"
           },
           {
@@ -672,6 +743,10 @@
           },
           {
             "name": "treasury",
+            "type": "pubkey"
+          },
+          {
+            "name": "stable_mint",
             "type": "pubkey"
           },
           {

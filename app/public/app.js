@@ -35,7 +35,11 @@ function requiredJobId() {
 }
 
 function getPhantomProvider() {
-  if (window.phantom && window.phantom.solana && window.phantom.solana.isPhantom) {
+  if (
+    window.phantom &&
+    window.phantom.solana &&
+    window.phantom.solana.isPhantom
+  ) {
     return window.phantom.solana;
   }
   if (window.solana && window.solana.isPhantom) {
@@ -45,7 +49,10 @@ function getPhantomProvider() {
 }
 
 function base64ToUint8Array(base64) {
-  const raw = String(base64 ?? "").trim().replaceAll("\n", "").replaceAll("\r", "");
+  const raw = String(base64 ?? "")
+    .trim()
+    .replaceAll("\n", "")
+    .replaceAll("\r", "");
   const normalized = raw.replaceAll("-", "+").replaceAll("_", "/");
   const padded =
     normalized.length % 4 === 0
@@ -95,10 +102,7 @@ async function connectPhantom(options) {
 
   const response = await provider.connect(options);
   state.provider = provider;
-  state.phantomPubkey = (
-    response.publicKey ||
-    provider.publicKey
-  ).toBase58();
+  state.phantomPubkey = (response.publicKey || provider.publicKey).toBase58();
   renderPhantomState();
   return state.phantomPubkey;
 }
@@ -142,7 +146,10 @@ async function api(path, method = "GET", body) {
 }
 
 async function refreshPanels() {
-  const [wallets, config] = await Promise.all([api("/api/wallets"), api("/api/config")]);
+  const [wallets, config] = await Promise.all([
+    api("/api/wallets"),
+    api("/api/config"),
+  ]);
   renderJson(walletsView, wallets.roles);
   renderJson(configView, {
     configPda: config.configPda,
@@ -167,7 +174,9 @@ async function signAndSendViaPhantom(buildPath, payload) {
   if (!built.txBase64 || typeof built.txBase64 !== "string") {
     throw new Error("txBase64 missing from server response");
   }
-  const tx = window.solanaWeb3.Transaction.from(base64ToUint8Array(built.txBase64));
+  const tx = window.solanaWeb3.Transaction.from(
+    base64ToUint8Array(built.txBase64)
+  );
   const signed = await provider.signTransaction(tx);
   const signedTxBase64 = uint8ArrayToBase64(signed.serialize());
   const sent = await api("/api/tx/send", "POST", { signedTxBase64 });
@@ -290,7 +299,9 @@ window.addEventListener("DOMContentLoaded", async () => {
       return;
     }
 
-    withAction("createJob(custodial)", () => api("/api/jobs/create", "POST", payload));
+    withAction("createJob(custodial)", () =>
+      api("/api/jobs/create", "POST", payload)
+    );
   });
 
   $("btn-fund").addEventListener("click", () => {
@@ -305,7 +316,9 @@ window.addEventListener("DOMContentLoaded", async () => {
       return;
     }
 
-    withAction("fundJob(custodial)", () => api("/api/jobs/fund", "POST", payload));
+    withAction("fundJob(custodial)", () =>
+      api("/api/jobs/fund", "POST", payload)
+    );
   });
 
   $("btn-submit").addEventListener("click", () =>
@@ -330,7 +343,9 @@ window.addEventListener("DOMContentLoaded", async () => {
       );
       return;
     }
-    withAction("reviewApprove(custodial)", () => api("/api/jobs/review", "POST", payload));
+    withAction("reviewApprove(custodial)", () =>
+      api("/api/jobs/review", "POST", payload)
+    );
   });
 
   $("btn-reject").addEventListener("click", () => {
@@ -344,7 +359,9 @@ window.addEventListener("DOMContentLoaded", async () => {
       );
       return;
     }
-    withAction("reviewReject(custodial)", () => api("/api/jobs/review", "POST", payload));
+    withAction("reviewReject(custodial)", () =>
+      api("/api/jobs/review", "POST", payload)
+    );
   });
 
   $("btn-timeout-buyer").addEventListener("click", () => {
