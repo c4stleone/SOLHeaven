@@ -1,0 +1,70 @@
+version: "3.9"
+
+services:
+  validator:
+    image: solanalabs/solana:v1.18.22
+    command: >
+      solana-test-validator
+      --ledger /var/solana/ledger
+      --rpc-bind-address 0.0.0.0
+      --rpc-port 8899
+      --faucet-port 9900
+      --reset
+    ports:
+      - "8899:8899"
+      - "9900:9900"
+    volumes:
+      - validator-ledger:/var/solana/ledger
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      - validator
+    environment:
+      RPC_URL: http://validator:8899
+      PORT: "8787"
+      ADMIN_KEYPAIR: /workspace/.docker/keys/admin.json
+    ports:
+      - "8787:8787"
+    volumes:
+      - app-wallets:/workspace/.app-wallets
+      - app-meta:/workspace/.run
+
+  deployer:
+    image: solanalabs/solana:v1.18.22
+    depends_on:
+      - validator
+    working_dir: /workspace
+    volumes:
+      - ./:/workspace
+    entrypoint: ["/bin/bash", "-lc"]
+    command: >
+      set -euo pipefail;
+      if [ ! -f target/deploy/outcome_escrow_anchor.so ]; then
+        echo "[deployer] missing target/deploy/outcome_escrow_anchor.so";
+        echo "[deployer] run anchor build first or include deploy artifact";
+        exit 1;
+      fi;
+      mkdir -p .docker/keys;
+      if [ ! -f .docker/keys/deployer.json ]; then
+        solana-keygen new --no-bip39-passphrase -f -o .docker/keys/deployer.json;
+      fi;
+      solana config set --url http://validator:8899 --keypair .docker/keys/deployer.json;
+      for i in $(seq 1 60); do
+        if solana -u http://validator:8899 cluster-version >/dev/null 2>&1; then
+          break;
+        fi;
+        sleep 1;
+      done;
+      solana -u http://validator:8899 airdrop 100 || true;
+      solana -u http://validator:8899 program deploy
+      target/deploy/outcome_escrow_anchor.so
+      --program-id target/deploy/outcome_escrow_anchor-keypair.json;
+      echo "[deployer] program deployed";
+
+volumes:
+  validator-ledger:
+  app-wallets:
+  app-meta:

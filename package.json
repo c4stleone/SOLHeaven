@@ -8,6 +8,8 @@
     "stack:down": "bash scripts/stack_down.sh",
     "stack:status": "bash scripts/stack_status.sh",
     "stack:logs": "bash scripts/stack_logs.sh",
+    "docker:up": "bash scripts/docker_stack_up.sh",
+    "docker:down": "bash scripts/docker_stack_down.sh",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint:fix": "prettier */*.js \"*/**/*{.js,.ts}\" -w",
     "lint": "prettier */*.js \"*/**/*{.js,.ts}\" --check"

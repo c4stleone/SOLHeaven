@@ -9,7 +9,7 @@ import {
   Transaction,
   VersionedTransaction,
 } from "@solana/web3.js";
-import idlJson from "../../target/idl/outcome_escrow_anchor.json";
+import idlJson from "../idl/outcome_escrow_anchor.json";
 
 const CONFIG_SEED = Buffer.from("config");
 const JOB_SEED = Buffer.from("job");

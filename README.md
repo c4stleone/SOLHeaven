@@ -201,7 +201,38 @@ npm run stack:logs
 npm run stack:down
 ```
 
-## 10) Notes for team
+## 10) Docker Run
+
+Docker 구성은 `validator + deployer + app` 3개 서비스입니다.
+
+- `validator`: Solana test-validator
+- `deployer`: `target/deploy/outcome_escrow_anchor.so`를 validator에 배포
+- `app`: `app/server.ts` 실행 (UI 정적 파일 포함)
+
+### One-command up/down
+```bash
+./scripts/docker_stack_up.sh
+./scripts/docker_stack_down.sh
+```
+
+### Manual compose
+```bash
+docker compose up -d validator
+docker compose run --rm deployer
+docker compose up -d app
+```
+
+### Endpoints
+- Frontend: `http://127.0.0.1:8787`
+- Backend health: `http://127.0.0.1:8787/api/health`
+- RPC: `http://127.0.0.1:8899`
+
+### Important
+- `deployer`는 `target/deploy/outcome_escrow_anchor.so`와
+  `target/deploy/outcome_escrow_anchor-keypair.json`을 사용합니다.
+- 프로그램을 다시 빌드했다면 최신 `.so`를 커밋하거나 배포 단계를 다시 실행하세요.
+
+## 11) Notes for team
 
 - 현재는 Phase 0(중앙화 Ops 판정) 모델입니다.
 - 자동 oracle 검증 레이어/x402 결합은 추후 확장 포인트로 분리했습니다.
@@ -209,4 +240,3 @@ npm run stack:down
   1. 상품별 가격이 서버에서 강제되는지
   2. approve/reject에 따라 정산 경로가 달라지는지
   3. Disputed 상태에서 Ops 최종 판정으로 종료되는지
-

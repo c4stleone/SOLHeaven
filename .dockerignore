@@ -1,0 +1,8 @@
+.git
+github-ready
+node_modules
+.run
+.localnet
+.anchor
+.app-wallets
+**/*.log
