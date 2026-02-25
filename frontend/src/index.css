@@ -106,19 +106,21 @@
   }
 
   .status-created {
-    @apply text-muted-foreground bg-muted;
+    @apply text-muted-foreground bg-muted/70 border border-muted-foreground/20;
   }
   .status-funded {
-    @apply text-primary bg-primary/10;
+    @apply text-primary bg-primary/15 border border-primary/30;
+    box-shadow: var(--glow-primary);
   }
   .status-submitted {
-    @apply text-warning bg-warning/10;
+    @apply text-warning bg-warning/15 border border-warning/30;
   }
   .status-disputed {
-    @apply text-destructive bg-destructive/10;
+    @apply text-destructive bg-destructive/15 border border-destructive/30;
   }
   .status-settled {
-    @apply text-success bg-success/10;
+    @apply text-success bg-success/15 border border-success/30;
+    box-shadow: var(--glow-success);
   }
 
   .grid-pattern {

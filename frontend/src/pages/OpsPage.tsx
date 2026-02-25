@@ -26,13 +26,6 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { toast } from "@/components/ui/use-toast";
 import {
   airdropRole,
@@ -91,11 +84,9 @@ const OpsPage = () => {
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
   const [rejectRefundAmount, setRejectRefundAmount] = useState("0");
   const [rejectTarget, setRejectTarget] = useState<JobSpec | null>(null);
-  const [faucetRole, setFaucetRole] = useState<
-    "admin" | "ops" | "buyer" | "operator" | "treasury"
-  >("buyer");
   const [faucetSol, setFaucetSol] = useState("1");
   const [faucetOwner, setFaucetOwner] = useState("");
+  const [faucetOwnerSol, setFaucetOwnerSol] = useState("");
   const [faucetAmount, setFaucetAmount] = useState("1");
 
   const walletsQuery = useQuery({
@@ -123,7 +114,10 @@ const OpsPage = () => {
     if (!faucetOwner && walletsQuery.data?.roles?.buyer) {
       setFaucetOwner(walletsQuery.data.roles.buyer);
     }
-  }, [faucetOwner, walletsQuery.data?.roles?.buyer]);
+    if (!faucetOwnerSol && walletsQuery.data?.roles?.buyer) {
+      setFaucetOwnerSol(walletsQuery.data.roles.buyer);
+    }
+  }, [faucetOwner, faucetOwnerSol, walletsQuery.data?.roles?.buyer]);
 
   const requests = useMemo(() => {
     const items = requestsQuery.data?.requests ?? [];
@@ -215,8 +209,7 @@ const OpsPage = () => {
   });
 
   const airdropMutation = useMutation({
-    mutationFn: (payload: { role: "admin" | "ops" | "buyer" | "operator" | "treasury"; sol: number }) =>
-      airdropRole(payload),
+    mutationFn: (payload: { owner: string; sol: number }) => airdropRole(payload),
     onSuccess: async () => {
       await refreshAll();
       toast({ title: "SOL airdrop 완료" });
@@ -325,13 +318,22 @@ const OpsPage = () => {
       });
       return;
     }
-    airdropMutation.mutate({ role: faucetRole, sol: solValue });
+    const owner = faucetOwnerSol.trim();
+    if (!owner) {
+      toast({
+        variant: "destructive",
+        title: "지갑 주소 오류",
+        description: "지갑 주소를 입력하세요.",
+      });
+      return;
+    }
+    airdropMutation.mutate({ owner, sol: solValue });
   };
 
   const submitTokenFaucet = () => {
     try {
-      const owner = faucetOwner.trim() || roleWallets[faucetRole];
-      if (!owner || owner === "-") {
+      const owner = faucetOwner.trim();
+      if (!owner) {
         throw new Error("지갑 주소를 입력하세요.");
       }
       const amountUnits = stableTextToLamports(faucetAmount, stableDecimals);
@@ -412,64 +414,56 @@ const OpsPage = () => {
 
         {FAUCET_ENABLED ? (
           <div className="grid md:grid-cols-2 gap-6">
-            <GlassCard className="border-warning/10">
-              <h2 className="text-lg font-bold mb-4 flex items-center gap-2">
-                <Zap className="w-5 h-5 text-warning" /> SOL Faucet
-              </h2>
-              <div className="space-y-3">
-                <div className="space-y-2">
-                  <Label>대상 Role</Label>
-                  <Select value={faucetRole} onValueChange={(value) => setFaucetRole(value as any)}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="role 선택" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {(["admin", "ops", "buyer", "operator", "treasury"] as const).map((role) => (
-                        <SelectItem key={role} value={role}>
-                          {role}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="faucet-sol">SOL 수량</Label>
-                  <Input
-                    id="faucet-sol"
+          <GlassCard className="border-warning/10">
+            <h2 className="text-lg font-bold mb-4 flex items-center gap-2">
+              <Zap className="w-5 h-5 text-warning" /> SOL Faucet
+            </h2>
+            <div className="space-y-3">
+              <div className="space-y-2">
+                <Label htmlFor="faucet-sol-owner">받을 지갑 주소</Label>
+                <Input
+                  id="faucet-sol-owner"
+                  type="text"
+                  placeholder="지갑 주소"
+                  value={faucetOwnerSol}
+                  onChange={(event) => setFaucetOwnerSol(event.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="faucet-sol">SOL 수량</Label>
+                <Input
+                  id="faucet-sol"
                     type="text"
                     placeholder="1"
-                    value={faucetSol}
-                    onChange={(event) => setFaucetSol(event.target.value)}
-                  />
-                </div>
-                <Button
-                  className="bg-warning text-warning-foreground hover:bg-warning/90 w-full"
-                  onClick={submitAirdrop}
-                  disabled={airdropMutation.isPending}
-                >
-                  SOL Airdrop
-                </Button>
+                  value={faucetSol}
+                  onChange={(event) => setFaucetSol(event.target.value)}
+                />
               </div>
-            </GlassCard>
+              <Button
+                className="bg-warning text-warning-foreground hover:bg-warning/90 w-full"
+                onClick={submitAirdrop}
+                disabled={airdropMutation.isPending}
+              >
+                SOL Airdrop
+              </Button>
+            </div>
+          </GlassCard>
 
             <GlassCard className="border-warning/10">
               <h2 className="text-lg font-bold mb-4 flex items-center gap-2">
                 <Zap className="w-5 h-5 text-warning" /> {stableSymbol} Faucet
               </h2>
               <div className="space-y-3">
-                <div className="space-y-2">
-                  <Label htmlFor="faucet-owner">받을 지갑 주소</Label>
-                  <Input
-                    id="faucet-owner"
-                    type="text"
-                    placeholder="지갑 주소"
-                    value={faucetOwner}
-                    onChange={(event) => setFaucetOwner(event.target.value)}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    비워두면 현재 선택된 role 지갑으로 전송됩니다.
-                  </p>
-                </div>
+              <div className="space-y-2">
+                <Label htmlFor="faucet-owner">받을 지갑 주소</Label>
+                <Input
+                  id="faucet-owner"
+                  type="text"
+                  placeholder="지갑 주소"
+                  value={faucetOwner}
+                  onChange={(event) => setFaucetOwner(event.target.value)}
+                />
+              </div>
                 <div className="space-y-2">
                   <Label htmlFor="faucet-amount">
                     수량 ({stableSymbol})

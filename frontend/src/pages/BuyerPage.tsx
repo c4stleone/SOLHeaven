@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import {
   RefreshCw,
+  Download,
   Eye,
   ChevronRight,
   Search,
@@ -36,6 +37,8 @@ import {
   createJob,
   createJobSpec,
   fundJob,
+  saveCatalogItem,
+  reviewJob,
   getOperatorCatalog,
   getOperatorRequests,
   getWallets,
@@ -95,6 +98,8 @@ const BuyerPage = () => {
   const [requestDialogOpen, setRequestDialogOpen] = useState(false);
   const [selectedService, setSelectedService] = useState<CatalogItem | null>(null);
   const [criteriaForm, setCriteriaForm] = useState<RequestCriteriaForm>(defaultCriteriaForm);
+  const [detailDialogOpen, setDetailDialogOpen] = useState(false);
+  const [selectedJobDetail, setSelectedJobDetail] = useState<JobSpec | null>(null);
 
   const walletsQuery = useQuery({
     queryKey: ["wallets"],
@@ -127,13 +132,42 @@ const BuyerPage = () => {
     }));
   }, []);
 
+  const syncMocksOnce = useRef(false);
+  useEffect(() => {
+    if (syncMocksOnce.current) {
+      return;
+    }
+    if (!catalogQuery.data?.services) {
+      return;
+    }
+    syncMocksOnce.current = true;
+    const apiIds = new Set(catalogQuery.data.services.map((service) => service.id));
+    const missing = mockMcpServices.filter((service) => !apiIds.has(service.id));
+    if (missing.length === 0) {
+      return;
+    }
+    Promise.all(
+      missing.map((service) =>
+        saveCatalogItem({
+          id: service.id,
+          title: service.title,
+          summary: service.summary,
+          category: service.category,
+          outputFormat: service.outputFormat,
+          agentPriceLamports: service.agentPriceLamports,
+        })
+      )
+    ).catch(() => {
+      syncMocksOnce.current = false;
+    });
+  }, [catalogQuery.data?.services, mockMcpServices]);
+
   const services = useMemo(() => {
     const fromApi = catalogQuery.data?.services ?? [];
-    const titleSet = new Set(fromApi.map((service) => service.title.trim().toLowerCase()));
+    const idSet = new Set(fromApi.map((service) => service.id));
     const merged = [...fromApi];
     for (const mockService of mockMcpServices) {
-      const titleKey = mockService.title.trim().toLowerCase();
-      if (!titleSet.has(titleKey)) {
+      if (!idSet.has(mockService.id)) {
         merged.push(mockService);
       }
     }
@@ -310,6 +344,23 @@ const BuyerPage = () => {
     },
   });
 
+  const reviewMutation = useMutation({
+    mutationFn: (payload: { jobId: string; approve: boolean }) => reviewJob(payload),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["operator-requests"] });
+      toast({ title: "Review submitted" });
+      setDetailDialogOpen(false);
+      setSelectedJobDetail(null);
+    },
+    onError: (error: any) => {
+      toast({
+        variant: "destructive",
+        title: "Review failed",
+        description: String(error?.message ?? "unknown error"),
+      });
+    },
+  });
+
   const refreshAll = async () => {
     await Promise.all([
       walletsQuery.refetch(),
@@ -361,6 +412,27 @@ const BuyerPage = () => {
         extraNotes: criteriaForm.extraNotes.trim(),
       },
     });
+  };
+
+  const openDetailDialog = (job: JobSpec) => {
+    setSelectedJobDetail(job);
+    setDetailDialogOpen(true);
+  };
+
+  const downloadSubmission = (job: JobSpec) => {
+    const body =
+      job.lastSubmissionBody ||
+      job.lastSubmissionPreview ||
+      "No submission content available.";
+    const blob = new Blob([body], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `job-${job.jobId}-submission.txt`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
   };
 
   const loading =
@@ -626,7 +698,7 @@ const BuyerPage = () => {
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: index * 0.05 }}
               >
-                <GlassCard hover className="cursor-pointer">
+                <GlassCard hover className="cursor-pointer" onClick={() => openDetailDialog(job)}>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-4 flex-1 min-w-0">
                       <div className="flex flex-col gap-1 min-w-0">
@@ -644,7 +716,14 @@ const BuyerPage = () => {
                           {new Date(job.createdAt).toLocaleDateString("ko-KR")}
                         </p>
                       </div>
-                      <Button variant="ghost" size="sm">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openDetailDialog(job);
+                        }}
+                      >
                         <Eye className="w-4 h-4" />
                       </Button>
                     </div>
@@ -659,6 +738,95 @@ const BuyerPage = () => {
             )}
           </div>
         </section>
+
+        <Dialog open={detailDialogOpen} onOpenChange={setDetailDialogOpen}>
+          <DialogContent className="sm:max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>Request Details</DialogTitle>
+              <DialogDescription>
+                Review submitted work and approve or reject the escrow release.
+              </DialogDescription>
+            </DialogHeader>
+            {selectedJobDetail ? (
+              <div className="space-y-4 text-sm">
+                <div className="grid gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-mono text-muted-foreground">
+                      #{selectedJobDetail.jobId}
+                    </span>
+                    <JobStatusBadge status={(selectedJobDetail.onChainStatus ?? 0) as JobStatus} />
+                  </div>
+                  <div className="font-semibold">{selectedJobDetail.taskTitle}</div>
+                  <div className="text-muted-foreground">{selectedJobDetail.taskBrief}</div>
+                </div>
+                <div className="grid md:grid-cols-2 gap-3">
+                  <div className="bg-background/50 rounded-lg p-3">
+                    <div className="text-xs text-muted-foreground mb-1">Service</div>
+                    <div className="font-medium">{selectedJobDetail.serviceTitle}</div>
+                  </div>
+                  <div className="bg-background/50 rounded-lg p-3">
+                    <div className="text-xs text-muted-foreground mb-1">Escrow</div>
+                    <div className="font-medium">
+                      {formatStable(String(selectedJobDetail.job?.reward ?? "0"), stableDecimals)}{" "}
+                      {stableSymbol}
+                    </div>
+                  </div>
+                </div>
+                <div className="bg-background/50 rounded-lg p-3 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-xs text-muted-foreground">Latest Submission</div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-xs"
+                      onClick={() => downloadSubmission(selectedJobDetail)}
+                      disabled={
+                        !selectedJobDetail.lastSubmissionBody &&
+                        !selectedJobDetail.lastSubmissionPreview
+                      }
+                    >
+                      <Download className="w-3.5 h-3.5 mr-1" />
+                      Download
+                    </Button>
+                  </div>
+                  <div className="font-mono text-xs whitespace-pre-wrap">
+                    {selectedJobDetail.lastSubmissionPreview || "No submission yet."}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+            <DialogFooter className="gap-2">
+              <Button variant="outline" onClick={() => setDetailDialogOpen(false)}>
+                Close
+              </Button>
+              <Button
+                variant="outline"
+                className="border-destructive/30 text-destructive"
+                disabled={
+                  reviewMutation.isPending || (selectedJobDetail?.onChainStatus ?? 0) !== 2
+                }
+                onClick={() => {
+                  if (!selectedJobDetail) return;
+                  reviewMutation.mutate({ jobId: selectedJobDetail.jobId, approve: false });
+                }}
+              >
+                Reject
+              </Button>
+              <Button
+                className="bg-success text-success-foreground hover:bg-success/90"
+                disabled={
+                  reviewMutation.isPending || (selectedJobDetail?.onChainStatus ?? 0) !== 2
+                }
+                onClick={() => {
+                  if (!selectedJobDetail) return;
+                  reviewMutation.mutate({ jobId: selectedJobDetail.jobId, approve: true });
+                }}
+              >
+                Approve
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </PageLayout>
   );

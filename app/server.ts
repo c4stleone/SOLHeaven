@@ -50,6 +50,7 @@ type JobSpec = {
   decidedAt: string | null;
   submittedAt: string | null;
   lastSubmissionPreview: string;
+  lastSubmissionBody?: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -862,18 +863,26 @@ app.post(
 app.post(
   "/api/airdrop",
   wrap(async (req: Request, res: Response) => {
-    const role = (req.body.role ?? "buyer") as RoleName;
     const sol = toNumber(req.body.sol, 2);
-    if (!roles[role]) {
+    const owner =
+      req.body?.owner === undefined ||
+      req.body?.owner === null ||
+      req.body?.owner === ""
+        ? null
+        : toPubkey(req.body.owner, "owner");
+    const role = (req.body.role ?? "buyer") as RoleName;
+    const target =
+      owner ?? (roles[role] ? roles[role].publicKey : undefined);
+    if (!target) {
       throw new Error(`invalid role: ${role}`);
     }
 
-    const signature = await client.airdrop(roles[role].publicKey, sol);
+    const signature = await client.airdrop(target, sol);
     res.json({
       ok: true,
-      role,
+      role: owner ? null : role,
       sol,
-      pubkey: roles[role].publicKey.toBase58(),
+      pubkey: target.toBase58(),
       signature,
     });
   })
@@ -1177,6 +1186,7 @@ app.post(
       decidedAt: null,
       submittedAt: prev?.submittedAt ?? null,
       lastSubmissionPreview: prev?.lastSubmissionPreview ?? "",
+      lastSubmissionBody: prev?.lastSubmissionBody ?? "",
       createdAt: prev?.createdAt ?? ts,
       updatedAt: ts,
     };
@@ -1537,6 +1547,7 @@ app.post(
             : linkedSpec.requestStatus,
         submittedAt: nowIso(),
         lastSubmissionPreview: submission.slice(0, 180),
+        lastSubmissionBody: submission.slice(0, 10_000),
         updatedAt: nowIso(),
       };
       persistMetaStore(metaStore);

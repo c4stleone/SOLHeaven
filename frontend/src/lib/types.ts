@@ -67,6 +67,7 @@ export type JobSpec = {
   decidedAt: string | null;
   submittedAt: string | null;
   lastSubmissionPreview: string;
+  lastSubmissionBody?: string;
   createdAt: string;
   updatedAt: string;
   onChainStatus?: JobStatus;
