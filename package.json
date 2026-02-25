@@ -3,6 +3,8 @@
   "scripts": {
     "test:anchor": "mocha -t 1000000 tests/",
     "app:dev": "tsx app/server.ts",
+    "frontend:install": "npm --prefix frontend install",
+    "frontend:build": "npm --prefix frontend run build",
     "sdk:demo": "tsx sdk/examples/demo-flow.ts",
     "stack:up": "bash scripts/stack_up.sh",
     "stack:down": "bash scripts/stack_down.sh",

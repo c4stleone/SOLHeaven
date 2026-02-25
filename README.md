@@ -25,9 +25,9 @@ MCP 기반 에이전트 작업을 `호출 수(pay-per-call)`가 아니라 `결�
 
 ```mermaid
 flowchart LR
-  B[Buyer UI<br/>buyer.html] -->|HTTP API| S[App Server<br/>app/server.ts]
-  O[Operator UI<br/>operator.html] -->|HTTP API| S
-  P[Ops UI<br/>ops.html] -->|HTTP API| S
+  B[Buyer UI<br/>/buyer] -->|HTTP API| S[App Server<br/>app/server.ts]
+  O[Operator UI<br/>/operator] -->|HTTP API| S
+  P[Ops UI<br/>/ops] -->|HTTP API| S
 
   S -->|Anchor RPC| C[(Solana Localnet<br/>OutcomeEscrow Program)]
   S <-->|Job/Config PDA fetch| C
@@ -123,18 +123,18 @@ sequenceDiagram
 
 ## 6) Role Pages
 
-- `/buyer.html`
+- `/buyer`
   - 상품 선택
   - 성공 기준(spec) 등록
   - create/fund/review/timeout
 
-- `/operator.html`
+- `/operator`
   - MCP 서버 연결/테스트
   - 카탈로그 등록/수정
   - 상품별 agent 가격 설정
   - 결과 제출
 
-- `/ops.html`
+- `/ops`
   - 분쟁 목록 조회(open/all)
   - 분쟁 상세 확인
   - approve/reject 버튼으로 resolve 실행
@@ -174,7 +174,7 @@ outcome-escrow-anchor/
 ├─ programs/outcome-escrow-anchor/src/lib.rs   # Anchor program
 ├─ sdk/src/                                    # TS SDK
 ├─ app/server.ts                               # API + static server
-├─ app/public/                                 # buyer/operator/ops pages
+├─ frontend/src/                               # React role pages
 ├─ scripts/                                    # stack up/down/log helpers
 ├─ tests/                                      # mocha integration tests
 ├─ Anchor.toml / Cargo.toml / package.json
@@ -203,16 +203,37 @@ npm run stack:up
 
 ### URLs
 - Home: `http://127.0.0.1:8787`
-- Buyer: `http://127.0.0.1:8787/buyer.html`
-- Operator: `http://127.0.0.1:8787/operator.html`
-- Ops: `http://127.0.0.1:8787/ops.html`
+- Buyer: `http://127.0.0.1:8787/buyer`
+- Operator: `http://127.0.0.1:8787/operator`
+- Ops: `http://127.0.0.1:8787/ops`
 
 ### Utilities
 ```bash
 npm run stack:status
 npm run stack:logs
 npm run stack:down
+bash scripts/verify_api.sh
 ```
+
+### Ports
+- App Server + Frontend (same process): `http://127.0.0.1:8787`
+- Solana RPC (local validator): `http://127.0.0.1:8899`
+- 즉, API 기본 포트는 `8787` 입니다. (`/api/*`)
+
+### Restart + Full API Verification
+```bash
+npm run stack:down
+npm run stack:up
+bash scripts/verify_api.sh
+```
+
+`verify_api.sh`는 Buyer/Operator/Ops 주요 플로우를 포함해 50+ API assertion을 수행합니다.
+- bootstrap / wallets / config / catalog / mcp
+- create/fund/submit/review/resolve/timeout (custodial)
+- tx create/fund/review/timeout + send (wallet sign flow)
+- events / faucet / airdrop / operator request decision
+
+참고: timeout은 프로그램 상태 머신상 `Submitted` 이후 + deadline 경과에서만 가능합니다.
 
 ## 10) Docker Run
 
@@ -253,3 +274,10 @@ docker compose up -d app
   1. 상품별 가격이 서버에서 강제되는지
   2. approve/reject에 따라 정산 경로가 달라지는지
   3. Disputed 상태에서 Ops 최종 판정으로 종료되는지
+
+## 12) Stability Notes
+
+- SDK 기본 commit level을 `processed` -> `confirmed`로 조정해,
+  `create` 직후 `fund` 요청에서 발생하던 간헐적 race를 제거했습니다.
+- `/api/bootstrap`는 on-chain config의 stable mint를 우선 source of truth로 사용해
+  stable mint mismatch 상황을 완화했습니다.

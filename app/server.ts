@@ -99,6 +99,9 @@ const ROLE_DIR = resolve(process.cwd(), ".app-wallets");
 const META_DIR = resolve(process.cwd(), ".run");
 const META_STORE_PATH = join(META_DIR, "request_market_store.json");
 const STABLE_MINT_PATH = join(META_DIR, "stable_mint.json");
+const FRONTEND_DIST_DIR = resolve(process.cwd(), "frontend/dist");
+const FRONTEND_INDEX_PATH = join(FRONTEND_DIST_DIR, "index.html");
+const HAS_FRONTEND_BUILD = existsSync(FRONTEND_INDEX_PATH);
 
 function nowIso() {
   return new Date().toISOString();
@@ -565,6 +568,14 @@ function serializeUnsignedTx(tx: Transaction): string {
   return Buffer.from(raw).toString("base64");
 }
 
+let lastGeneratedJobId = 0n;
+function nextDefaultJobId(): anchor.BN {
+  const nowMs = BigInt(Date.now());
+  const next = nowMs > lastGeneratedJobId ? nowMs : lastGeneratedJobId + 1n;
+  lastGeneratedJobId = next;
+  return new anchor.BN(next.toString());
+}
+
 mkdirSync(ROLE_DIR, { recursive: true });
 const roles: Record<RoleName, Keypair> = {
   admin: loadKeypairFromFile(ADMIN_KEYPAIR),
@@ -583,6 +594,13 @@ const wrap =
     handler(req, res).catch(next);
 
 async function ensureStableMint(): Promise<PublicKey> {
+  // On-chain config mint is the source of truth once initialized.
+  const config = await client.fetchConfig();
+  if (config?.stableMint) {
+    writeStableMintToDisk(config.stableMint);
+    return config.stableMint;
+  }
+
   const cached = readStableMintFromDisk();
   if (cached) {
     const info = await client.provider.connection.getAccountInfo(
@@ -690,7 +708,13 @@ function serviceRewardForCreate(serviceIdInput: unknown): {
 }
 
 app.use(express.json());
-app.use(express.static(resolve(process.cwd(), "app/public")));
+if (HAS_FRONTEND_BUILD) {
+  app.use(express.static(FRONTEND_DIST_DIR));
+} else {
+  console.warn(
+    `[frontend] missing build output: ${FRONTEND_INDEX_PATH}. run \"npm --prefix frontend run build\"`
+  );
+}
 
 app.get(
   "/api/health",
@@ -756,7 +780,11 @@ app.post(
   "/api/bootstrap",
   wrap(async (req: Request, res: Response) => {
     const bootstrapSol = toNumber(req.body?.sol, 2);
-    const stableMint = await ensureStableMint();
+    const preConfig = await client.fetchConfig();
+    const stableMint = preConfig?.stableMint ?? (await ensureStableMint());
+    if (preConfig?.stableMint) {
+      writeStableMintToDisk(preConfig.stableMint);
+    }
     const bootstrapBuyerUnits = tokenAmountBigInt(
       req.body?.buyerUnits ?? DEFAULT_BOOTSTRAP_MINT_AMOUNT,
       "buyerUnits"
@@ -772,10 +800,9 @@ app.post(
     if (!config) {
       throw new Error("config initialization failed");
     }
-    if (!config.stableMint.equals(stableMint)) {
-      throw new Error(
-        `stable mint mismatch: config=${config.stableMint.toBase58()} local=${stableMint.toBase58()}`
-      );
+    const effectiveStableMint = config.stableMint;
+    if (!effectiveStableMint.equals(stableMint)) {
+      writeStableMintToDisk(effectiveStableMint);
     }
 
     if (!config.ops.equals(roles.ops.publicKey)) {
@@ -795,11 +822,11 @@ app.post(
       }
     }
 
-    const roleTokenAccounts = await ensureRoleTokenAccounts(stableMint);
+    const roleTokenAccounts = await ensureRoleTokenAccounts(effectiveStableMint);
     const buyerMintSig = await mintTo(
       client.provider.connection,
       roles.admin,
-      stableMint,
+      effectiveStableMint,
       new PublicKey(roleTokenAccounts.buyer),
       roles.admin,
       bootstrapBuyerUnits
@@ -815,7 +842,7 @@ app.post(
       funded,
       stableSymbol: STABLE_SYMBOL,
       stableDecimals: STABLE_DECIMALS,
-      stableMint: stableMint.toBase58(),
+      stableMint: effectiveStableMint.toBase58(),
       buyerMintedUnits: bootstrapBuyerUnits.toString(),
       buyerMintSignature: buyerMintSig,
       roleTokenAccounts,
@@ -1267,7 +1294,7 @@ app.post(
       req.body.jobId === undefined ||
       req.body.jobId === null ||
       req.body.jobId === ""
-        ? new anchor.BN(now)
+        ? nextDefaultJobId()
         : toBn(req.body.jobId, "jobId");
     const pricing = serviceRewardForCreate(req.body.serviceId);
     const rewardLamports = pricing.rewardLamports;
@@ -1408,7 +1435,7 @@ app.post(
       req.body.jobId === undefined ||
       req.body.jobId === null ||
       req.body.jobId === ""
-        ? new anchor.BN(now)
+        ? nextDefaultJobId()
         : toBn(req.body.jobId, "jobId");
     const pricing = serviceRewardForCreate(req.body.serviceId);
     const rewardLamports = pricing.rewardLamports;
@@ -1643,6 +1670,16 @@ app.get(
     });
   })
 );
+
+if (HAS_FRONTEND_BUILD) {
+  app.get("*", (req: Request, res: Response, next: (err?: unknown) => void) => {
+    if (req.path.startsWith("/api/")) {
+      next();
+      return;
+    }
+    res.sendFile(FRONTEND_INDEX_PATH);
+  });
+}
 
 app.use((err: any, _req: Request, res: Response, _next: unknown) => {
   const message = err?.message ?? "unknown error";

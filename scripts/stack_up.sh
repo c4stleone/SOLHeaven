@@ -7,6 +7,9 @@ LOCALNET_DIR="${ROOT_DIR}/.localnet"
 LEDGER_DIR="${LOCALNET_DIR}/ledger"
 VALIDATOR_LOG="${LOCALNET_DIR}/validator.log"
 APP_LOG="${RUN_DIR}/app.log"
+FRONTEND_DIR="${ROOT_DIR}/frontend"
+FRONTEND_DIST_DIR="${FRONTEND_DIR}/dist"
+FRONTEND_INDEX_FILE="${FRONTEND_DIST_DIR}/index.html"
 
 VALIDATOR_PID_FILE="${RUN_DIR}/validator.pid"
 APP_PID_FILE="${RUN_DIR}/app.pid"
@@ -58,6 +61,19 @@ wait_for_app() {
     sleep 1
   done
   echo "[error] app api not reachable at $APP_URL/api/health"
+  return 1
+}
+
+wait_for_frontend() {
+  local i
+  for i in $(seq 1 40); do
+    if curl -sf "$APP_URL/" >/dev/null 2>&1; then
+      echo "[frontend] ready: ${APP_URL}/"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "[error] frontend not reachable at ${APP_URL}/"
   return 1
 }
 
@@ -134,6 +150,21 @@ if [ ! -d "${ROOT_DIR}/node_modules" ]; then
   npm install
 fi
 
+if [ ! -f "${FRONTEND_DIR}/package.json" ]; then
+  echo "[error] missing frontend package.json at ${FRONTEND_DIR}"
+  exit 1
+fi
+
+echo "[frontend] installing dependencies..."
+npm --prefix frontend install
+
+echo "[frontend] build"
+npm --prefix frontend run build
+if [ ! -f "$FRONTEND_INDEX_FILE" ]; then
+  echo "[error] frontend build output missing: ${FRONTEND_INDEX_FILE}"
+  exit 1
+fi
+
 if [ "$SKIP_DEPLOY" = "1" ]; then
   echo "[anchor] SKIP_DEPLOY=1 -> skip build/deploy"
 else
@@ -145,9 +176,13 @@ fi
 
 start_app
 wait_for_app
+wait_for_frontend
 
 echo "[done] stack is up"
 echo "  frontend: ${APP_URL}"
+echo "  buyer   : ${APP_URL}/buyer"
+echo "  operator: ${APP_URL}/operator"
+echo "  ops     : ${APP_URL}/ops"
 echo "  backend : ${APP_URL}/api/health"
 echo "  rpc     : ${RPC_URL}"
 echo "  logs    : ${APP_LOG}, ${VALIDATOR_LOG}"

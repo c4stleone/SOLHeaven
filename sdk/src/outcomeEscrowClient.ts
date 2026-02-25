@@ -20,6 +20,10 @@ import idlJson from "../idl/outcome_escrow_anchor.json";
 
 const CONFIG_SEED = Buffer.from("config");
 const JOB_SEED = Buffer.from("job");
+const DEFAULT_CONFIRM_OPTIONS: ConfirmOptions = {
+  commitment: "confirmed",
+  preflightCommitment: "confirmed",
+};
 
 export const JOB_STATUS = {
   CREATED: 0,
@@ -118,7 +122,7 @@ export class OutcomeEscrowClient {
   static fromKeypair(
     rpcUrl: string,
     payer: Keypair,
-    opts: ConfirmOptions = anchor.AnchorProvider.defaultOptions()
+    opts: ConfirmOptions = DEFAULT_CONFIRM_OPTIONS
   ): OutcomeEscrowClient {
     const connection = new Connection(rpcUrl, opts.commitment ?? "confirmed");
     const provider = new anchor.AnchorProvider(
@@ -319,6 +323,7 @@ export class OutcomeEscrowClient {
       [buyer],
       {
         commitment: "confirmed",
+        preflightCommitment: "confirmed",
         skipPreflight: false,
       }
     );
@@ -450,6 +455,7 @@ export class OutcomeEscrowClient {
       [buyer],
       {
         commitment: "confirmed",
+        preflightCommitment: "confirmed",
         skipPreflight: false,
       }
     );
@@ -637,6 +643,7 @@ export class OutcomeEscrowClient {
       [input.ops],
       {
         commitment: "confirmed",
+        preflightCommitment: "confirmed",
         skipPreflight: false,
       }
     );
