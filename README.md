@@ -7,6 +7,10 @@ MCP 기반 에이전트 작업을 `호출 수(pay-per-call)`가 아니라 `결�
 - Operator: MCP 연결 관리 + 상품 등록/수정(상품별 agent 가격) + 결과 제출
 - Ops: 분쟁 리스트 확인 + approve/reject(최종 정산) + 수동 resolve/timeout
 
+## Reference Architecture
+
+- 설계 참고 문서: <https://github.com/c4stleone/SOLHeaven/blob/main/outcome_escrow_architecture.md>
+
 ## 1) Why this architecture
 
 핵심 목표는 두 가지입니다.
