@@ -1,0 +1,23 @@
+# Auto-convert line endings to LF for all shell scripts
+scripts/** text eol=lf
+*.sh text eol=lf
+
+# Auto-convert line endings to CRLF for Windows batch scripts
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary files
+*.so binary
+*.jar binary
+*.png binary
+*.jpg binary
+*.gif binary
+
+# Default for source code
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.jsx text eol=lf
+*.rs text eol=lf
+*.toml text eol=lf
+*.json text eol=lf
