@@ -254,3 +254,11 @@ export function timeoutJob(payload: {
 }) {
   return post("/api/jobs/timeout", payload);
 }
+
+export function tokenFaucet(payload: {
+  owner?: string;
+  amountUnits?: string;
+  amount?: string;
+}) {
+  return post("/api/token/faucet", payload ?? {});
+}

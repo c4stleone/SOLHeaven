@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import {
@@ -26,14 +26,23 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { toast } from "@/components/ui/use-toast";
 import {
+  airdropRole,
   bootstrapSystem,
   getConfig,
   getHealth,
   getOperatorRequests,
   getWallets,
   resolveJob,
+  tokenFaucet,
   timeoutJob,
 } from "@/lib/api";
 import type { JobSpec, JobStatus } from "@/lib/types";
@@ -70,6 +79,9 @@ const stableTextToLamports = (value: string, decimals: number): bigint => {
   return BigInt(units || "0");
 };
 
+const FAUCET_ENABLED =
+  String(import.meta.env.VITE_ENABLE_FAUCET ?? "true").toLowerCase() !== "false";
+
 const OpsPage = () => {
   const queryClient = useQueryClient();
   const [disputeFilter, setDisputeFilter] = useState<"open" | "all">("open");
@@ -79,6 +91,12 @@ const OpsPage = () => {
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
   const [rejectRefundAmount, setRejectRefundAmount] = useState("0");
   const [rejectTarget, setRejectTarget] = useState<JobSpec | null>(null);
+  const [faucetRole, setFaucetRole] = useState<
+    "admin" | "ops" | "buyer" | "operator" | "treasury"
+  >("buyer");
+  const [faucetSol, setFaucetSol] = useState("1");
+  const [faucetOwner, setFaucetOwner] = useState("");
+  const [faucetAmount, setFaucetAmount] = useState("1");
 
   const walletsQuery = useQuery({
     queryKey: ["wallets"],
@@ -100,6 +118,12 @@ const OpsPage = () => {
   const addLog = (message: string) => {
     setActivityLogs((prev) => [`[${formatTimestamp()}] ${message}`, ...prev].slice(0, 100));
   };
+
+  useEffect(() => {
+    if (!faucetOwner && walletsQuery.data?.roles?.buyer) {
+      setFaucetOwner(walletsQuery.data.roles.buyer);
+    }
+  }, [faucetOwner, walletsQuery.data?.roles?.buyer]);
 
   const requests = useMemo(() => {
     const items = requestsQuery.data?.requests ?? [];
@@ -190,6 +214,42 @@ const OpsPage = () => {
     },
   });
 
+  const airdropMutation = useMutation({
+    mutationFn: (payload: { role: "admin" | "ops" | "buyer" | "operator" | "treasury"; sol: number }) =>
+      airdropRole(payload),
+    onSuccess: async () => {
+      await refreshAll();
+      toast({ title: "SOL airdrop 완료" });
+      addLog("SOL airdrop executed");
+    },
+    onError: (error: any) => {
+      toast({
+        variant: "destructive",
+        title: "SOL airdrop 실패",
+        description: String(error?.message ?? "unknown error"),
+      });
+      addLog(`SOL airdrop failed: ${String(error?.message ?? "unknown error")}`);
+    },
+  });
+
+  const tokenFaucetMutation = useMutation({
+    mutationFn: (payload: { owner: string; amountUnits: string }) =>
+      tokenFaucet(payload),
+    onSuccess: async () => {
+      await refreshAll();
+      toast({ title: `${stableSymbol} faucet 완료` });
+      addLog(`${stableSymbol} faucet executed`);
+    },
+    onError: (error: any) => {
+      toast({
+        variant: "destructive",
+        title: `${stableSymbol} faucet 실패`,
+        description: String(error?.message ?? "unknown error"),
+      });
+      addLog(`${stableSymbol} faucet failed: ${String(error?.message ?? "unknown error")}`);
+    },
+  });
+
   const roleWallets = walletsQuery.data?.roles ?? {
     admin: "-",
     ops: "-",
@@ -255,6 +315,42 @@ const OpsPage = () => {
     }
   };
 
+  const submitAirdrop = () => {
+    const solValue = Number(faucetSol);
+    if (!Number.isFinite(solValue) || solValue <= 0) {
+      toast({
+        variant: "destructive",
+        title: "SOL 수량 오류",
+        description: "0보다 큰 수량을 입력하세요.",
+      });
+      return;
+    }
+    airdropMutation.mutate({ role: faucetRole, sol: solValue });
+  };
+
+  const submitTokenFaucet = () => {
+    try {
+      const owner = faucetOwner.trim() || roleWallets[faucetRole];
+      if (!owner || owner === "-") {
+        throw new Error("지갑 주소를 입력하세요.");
+      }
+      const amountUnits = stableTextToLamports(faucetAmount, stableDecimals);
+      if (amountUnits <= 0) {
+        throw new Error("0보다 큰 수량을 입력하세요.");
+      }
+      tokenFaucetMutation.mutate({
+        owner,
+        amountUnits: amountUnits.toString(),
+      });
+    } catch (error: any) {
+      toast({
+        variant: "destructive",
+        title: `${stableSymbol} 수량 오류`,
+        description: String(error?.message ?? "invalid amount"),
+      });
+    }
+  };
+
   const loading =
     walletsQuery.isLoading ||
     configQuery.isLoading ||
@@ -313,6 +409,90 @@ const OpsPage = () => {
             </div>
           </GlassCard>
         </div>
+
+        {FAUCET_ENABLED ? (
+          <div className="grid md:grid-cols-2 gap-6">
+            <GlassCard className="border-warning/10">
+              <h2 className="text-lg font-bold mb-4 flex items-center gap-2">
+                <Zap className="w-5 h-5 text-warning" /> SOL Faucet
+              </h2>
+              <div className="space-y-3">
+                <div className="space-y-2">
+                  <Label>대상 Role</Label>
+                  <Select value={faucetRole} onValueChange={(value) => setFaucetRole(value as any)}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="role 선택" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(["admin", "ops", "buyer", "operator", "treasury"] as const).map((role) => (
+                        <SelectItem key={role} value={role}>
+                          {role}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="faucet-sol">SOL 수량</Label>
+                  <Input
+                    id="faucet-sol"
+                    type="text"
+                    placeholder="1"
+                    value={faucetSol}
+                    onChange={(event) => setFaucetSol(event.target.value)}
+                  />
+                </div>
+                <Button
+                  className="bg-warning text-warning-foreground hover:bg-warning/90 w-full"
+                  onClick={submitAirdrop}
+                  disabled={airdropMutation.isPending}
+                >
+                  SOL Airdrop
+                </Button>
+              </div>
+            </GlassCard>
+
+            <GlassCard className="border-warning/10">
+              <h2 className="text-lg font-bold mb-4 flex items-center gap-2">
+                <Zap className="w-5 h-5 text-warning" /> {stableSymbol} Faucet
+              </h2>
+              <div className="space-y-3">
+                <div className="space-y-2">
+                  <Label htmlFor="faucet-owner">받을 지갑 주소</Label>
+                  <Input
+                    id="faucet-owner"
+                    type="text"
+                    placeholder="지갑 주소"
+                    value={faucetOwner}
+                    onChange={(event) => setFaucetOwner(event.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    비워두면 현재 선택된 role 지갑으로 전송됩니다.
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="faucet-amount">
+                    수량 ({stableSymbol})
+                  </Label>
+                  <Input
+                    id="faucet-amount"
+                    type="text"
+                    placeholder="1.0"
+                    value={faucetAmount}
+                    onChange={(event) => setFaucetAmount(event.target.value)}
+                  />
+                </div>
+                <Button
+                  className="bg-warning text-warning-foreground hover:bg-warning/90 w-full"
+                  onClick={submitTokenFaucet}
+                  disabled={tokenFaucetMutation.isPending}
+                >
+                  {stableSymbol} Mint
+                </Button>
+              </div>
+            </GlassCard>
+          </div>
+        ) : null}
 
         <section>
           <div className="flex items-center justify-between mb-4">

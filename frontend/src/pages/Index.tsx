@@ -1,6 +1,15 @@
-import { Link } from "react-router-dom";
+﻿import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
-import { ShoppingCart, Settings, ArrowRight, Hexagon, Zap, Lock, BarChart3 } from "lucide-react";
+import {
+  ShoppingCart,
+  Settings,
+  Shield,
+  ArrowRight,
+  Hexagon,
+  Zap,
+  Lock,
+  BarChart3,
+} from "lucide-react";
 import PageLayout from "@/components/layout/PageLayout";
 import GlassCard from "@/components/shared/GlassCard";
 
@@ -19,6 +28,13 @@ const roles = [
     path: "/operator",
     accent: "accent" as const,
   },
+  {
+    title: "Ops",
+    description: "서비스 분쟁/timeout/resolve 등 운영용 공용 페이지에서 처리합니다.",
+    icon: Shield,
+    path: "/ops",
+    accent: "warning" as const,
+  },
 ];
 
 const features = [
@@ -30,11 +46,13 @@ const features = [
 const accentStyles = {
   primary: "border-primary/30 hover:border-primary/60 hover:shadow-[0_0_30px_hsl(174_72%_56%/0.15)]",
   accent: "border-accent/30 hover:border-accent/60 hover:shadow-[0_0_30px_hsl(265_70%_60%/0.15)]",
+  warning: "border-warning/30 hover:border-warning/60 hover:shadow-[0_0_30px_hsl(35_100%_60%/0.2)]",
 };
 
 const iconAccent = {
   primary: "text-primary",
   accent: "text-accent",
+  warning: "text-warning",
 };
 
 const Index = () => {
@@ -57,7 +75,7 @@ const Index = () => {
               </div>
             </div>
             <p className="text-sm font-mono text-primary tracking-widest uppercase mb-4">
-              Phase 0 · Anchor + Localnet
+              Phase 0  Anchor + Localnet
             </p>
             <h1 className="text-5xl md:text-6xl font-bold mb-6 leading-tight">
               Outcome<span className="text-gradient">Escrow</span>
@@ -91,7 +109,7 @@ const Index = () => {
           </motion.div>
 
           {/* Role Cards */}
-          <div className="grid md:grid-cols-2 gap-6 max-w-3xl mx-auto">
+          <div className="grid md:grid-cols-3 gap-6 max-w-5xl mx-auto">
             {roles.map((role, i) => (
               <motion.div
                 key={role.title}

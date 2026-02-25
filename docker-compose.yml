@@ -31,6 +31,7 @@ services:
     volumes:
       - app-wallets:/workspace/.app-wallets
       - app-meta:/workspace/.run
+      - app-keys:/workspace/.docker/keys
 
   deployer:
     image: solanalabs/solana:v1.18.22
@@ -65,3 +66,4 @@ volumes:
   validator-ledger:
   app-wallets:
   app-meta:
+  app-keys:
