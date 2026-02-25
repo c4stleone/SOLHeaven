@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OutcomeEscrow Ops</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="panel top-nav">
+        <a href="/">Home</a>
+        <a href="/buyer.html">Buyer</a>
+        <a href="/operator.html">Operator</a>
+        <a class="active" href="/ops.html">Ops</a>
+      </section>
+
+      <section class="hero panel">
+        <p class="tag">Ops Console</p>
+        <h1>Ops Actions</h1>
+        <p class="subtitle">분쟁 해소(Resolve), Ops 타임아웃, 시스템 부트스트랩을 수행합니다.</p>
+        <div class="hero-actions">
+          <button id="btn-bootstrap" class="btn btn-primary">Bootstrap Config</button>
+          <button id="btn-refresh" class="btn btn-ghost">Refresh State</button>
+        </div>
+      </section>
+
+      <section class="grid two">
+        <article class="panel">
+          <h2>Role Wallets</h2>
+          <pre id="wallets-view" class="code"></pre>
+        </article>
+        <article class="panel">
+          <h2>Config</h2>
+          <pre id="config-view" class="code"></pre>
+        </article>
+      </section>
+
+      <section class="grid two">
+        <article class="panel">
+          <div class="actions-row section-head">
+            <h2>Dispute List</h2>
+            <select id="dispute-filter">
+              <option value="open">open only</option>
+              <option value="all">all requests</option>
+            </select>
+          </div>
+          <p class="hint">온체인 상태가 Disputed(3)인 작업을 우선 표시합니다.</p>
+          <div id="dispute-list" class="job-list"></div>
+        </article>
+        <article class="panel">
+          <div class="job-summary-head">
+            <h2>Dispute Detail</h2>
+            <span id="dispute-status-chip" class="status-chip tone-muted">No dispute</span>
+          </div>
+          <dl class="summary-grid">
+            <div>
+              <dt>Job ID</dt>
+              <dd id="dispute-detail-job-id">-</dd>
+            </div>
+            <div>
+              <dt>Buyer</dt>
+              <dd id="dispute-detail-buyer">-</dd>
+            </div>
+            <div>
+              <dt>Service</dt>
+              <dd id="dispute-detail-service">-</dd>
+            </div>
+            <div>
+              <dt>Status</dt>
+              <dd id="dispute-detail-status">-</dd>
+            </div>
+          </dl>
+          <h3>Request Brief</h3>
+          <pre id="dispute-detail-brief" class="code compact"></pre>
+          <h3>Criteria</h3>
+          <pre id="dispute-detail-criteria" class="code compact"></pre>
+          <label
+            >Ops 판정 메모
+            <input id="dispute-reason" type="text" value="ops_dispute_resolution" />
+          </label>
+          <div class="actions-row">
+            <button id="btn-dispute-approve" class="btn btn-primary" type="button">
+              Approve (Operator 지급)
+            </button>
+            <button id="btn-dispute-reject" class="btn btn-secondary" type="button">
+              Reject (Buyer 환불)
+            </button>
+          </div>
+        </article>
+      </section>
+
+      <section class="grid two">
+        <article class="panel">
+          <h2>Resolve Dispute</h2>
+          <form id="form-resolve" class="stack">
+            <label
+              >Buyer Public Key
+              <input id="resolve-buyer" type="text" placeholder="buyer pubkey" />
+            </label>
+            <label
+              >Job ID
+              <input id="resolve-job-id" type="text" placeholder="job id 숫자" />
+            </label>
+            <label
+              >Payout (lamports)
+              <input id="resolve-payout" type="number" min="0" step="1" value="0" />
+            </label>
+            <label
+              >Reason
+              <input id="resolve-reason" type="text" value="manual_resolution" />
+            </label>
+            <button class="btn btn-secondary" type="submit">Resolve</button>
+          </form>
+        </article>
+
+        <article class="panel">
+          <h2>Timeout / Query</h2>
+          <form id="form-timeout" class="stack">
+            <label
+              >Buyer Public Key
+              <input id="timeout-buyer" type="text" placeholder="buyer pubkey" />
+            </label>
+            <label
+              >Job ID
+              <input id="timeout-job-id" type="text" placeholder="job id 숫자" />
+            </label>
+            <div class="actions-row">
+              <button id="btn-timeout-ops" class="btn btn-ghost" type="button">Timeout(ops)</button>
+              <button id="btn-fetch-job" class="btn btn-primary" type="button">Fetch Job</button>
+            </div>
+          </form>
+        </article>
+      </section>
+
+      <section class="grid two">
+        <article class="panel">
+          <h2>Job Snapshot</h2>
+          <pre id="job-view" class="code"></pre>
+        </article>
+        <article class="panel">
+          <h2>Activity Log</h2>
+          <pre id="log-view" class="code"></pre>
+        </article>
+      </section>
+    </main>
+
+    <script src="/ops.js"></script>
+  </body>
+</html>

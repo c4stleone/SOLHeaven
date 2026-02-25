@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OutcomeEscrow Buyer</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body class="buyer-app">
+    <main class="shell buyer-shell">
+      <section class="panel top-nav">
+        <a href="/">Home</a>
+        <a class="active" href="/buyer.html">Buyer</a>
+        <a href="/operator.html">Operator</a>
+        <a href="/ops.html">Ops</a>
+      </section>
+
+      <section class="panel buyer-hero">
+        <div>
+          <p class="tag">OutcomeEscrow Purchase Center</p>
+          <h1>성과 기반 에이전트 발주</h1>
+          <p class="subtitle">
+            호출 수가 아니라 검증된 결과물 기준으로 정산합니다. 새 의뢰를 등록하고, 에스크로 예치,
+            결과 승인/거절까지 한 화면에서 관리합니다.
+          </p>
+          <div class="service-badges">
+            <span>Outcome-only Settlement</span>
+            <span>On-chain Audit Trail</span>
+            <span>Dispute-safe Escrow</span>
+          </div>
+        </div>
+        <aside class="wallet-card">
+          <div class="wallet-head">
+            <h2>내 지갑</h2>
+            <span id="wallet-chip" class="status-chip tone-muted">Disconnected</span>
+          </div>
+          <p id="wallet-address" class="wallet-address">Phantom 연결 필요</p>
+          <div class="wallet-actions">
+            <button id="btn-phantom-connect" class="btn btn-primary" data-busy-lock>
+              Connect Phantom
+            </button>
+            <button id="btn-phantom-disconnect" class="btn btn-ghost" data-busy-lock>
+              Disconnect
+            </button>
+          </div>
+        </aside>
+      </section>
+
+      <section class="kpi-grid">
+        <article class="panel kpi-card">
+          <p class="kpi-label">진행중 작업</p>
+          <p id="metric-active" class="kpi-value">0</p>
+        </article>
+        <article class="panel kpi-card">
+          <p class="kpi-label">검토 대기</p>
+          <p id="metric-pending-review" class="kpi-value">0</p>
+        </article>
+        <article class="panel kpi-card">
+          <p class="kpi-label">정산 완료</p>
+          <p id="metric-settled" class="kpi-value">0</p>
+        </article>
+        <article class="panel kpi-card">
+          <p class="kpi-label">활성 에스크로(SOL)</p>
+          <p id="metric-lock-sol" class="kpi-value">0.0000</p>
+        </article>
+      </section>
+
+      <section class="panel marketplace-panel">
+        <div class="marketplace-head">
+          <div>
+            <h2>MCP 상품 마켓</h2>
+            <p class="hint">원하는 MCP 상품을 먼저 고르고, 성공 기준을 붙여서 발주합니다.</p>
+          </div>
+          <button id="btn-refresh-services" class="btn btn-ghost" type="button" data-busy-lock>
+            상품 새로고침
+          </button>
+        </div>
+        <div class="market-controls">
+          <input
+            id="market-search"
+            type="search"
+            placeholder="상품 검색 (예: 주간 주식시장 동향 리서치)"
+          />
+          <select id="market-category">
+            <option value="">전체 카테고리</option>
+          </select>
+        </div>
+        <div id="product-grid" class="product-grid"></div>
+      </section>
+
+      <section class="grid two buyer-main-grid">
+        <article class="panel">
+          <h2>새 작업 의뢰</h2>
+          <p class="hint">작업 조건을 등록하면 Job이 생성됩니다. 필요하면 생성 직후 자동 예치합니다.</p>
+          <form id="form-create" class="stack">
+            <section class="selected-service-box">
+              <p class="kpi-label">선택된 MCP 상품</p>
+              <div class="selected-service-head">
+                <strong id="selected-service-title">상품을 선택하세요</strong>
+                <span id="selected-service-format" class="status-chip tone-muted">-</span>
+              </div>
+              <p id="selected-service-summary" class="hint selected-service-summary">
+                위 상품 목록에서 카드를 선택하면 상세가 표시됩니다.
+              </p>
+              <div class="actions-row">
+                <span id="selected-service-category" class="status-chip tone-muted">카테고리 미선택</span>
+                <span id="selected-service-id" class="status-chip tone-muted">ID -</span>
+                <span id="selected-service-price" class="status-chip tone-submitted">가격 -</span>
+              </div>
+              <input id="create-service-id" type="hidden" />
+            </section>
+            <label
+              >작업 제목
+              <input id="create-title" type="text" maxlength="80" placeholder="예: 경쟁사 리서치 리포트" />
+            </label>
+            <label
+              >요청 설명
+              <textarea
+                id="create-brief"
+                rows="3"
+                maxlength="500"
+                placeholder="납품 기대 산출물, 포함 항목, 마감 기준을 입력"
+              ></textarea>
+            </label>
+            <div class="grid two dense">
+              <label
+                >운영자 등록 가격 (lamports)
+                <input
+                  id="create-reward"
+                  type="text"
+                  value="1000000"
+                  readonly
+                  title="가격은 운영자 등록값을 사용합니다."
+                />
+              </label>
+              <label
+                >마감 (지금부터 초)
+                <input id="create-deadline-seconds" type="number" min="1" step="1" value="3600" />
+              </label>
+            </div>
+            <div class="grid two dense">
+              <label
+                >수수료 (bps)
+                <input id="create-fee-bps" type="number" min="0" max="10000" step="1" value="100" />
+              </label>
+              <label
+                >Job ID (선택)
+                <input id="create-job-id" type="text" placeholder="비우면 현재 타임스탬프 사용" />
+              </label>
+            </div>
+            <h3>성공 기준</h3>
+            <div class="grid two dense">
+              <label
+                >최소 페이지 수
+                <input id="criteria-min-pages" type="number" min="0" step="1" value="10" />
+              </label>
+              <label
+                >최소 출처 링크 수
+                <input id="criteria-min-source-links" type="number" min="0" step="1" value="20" />
+              </label>
+            </div>
+            <div class="grid two dense">
+              <label
+                >신뢰도 높은 도메인 비율(%)
+                <input id="criteria-min-trusted-ratio" type="number" min="0" max="100" step="1" value="70" />
+              </label>
+              <label
+                >제출 포맷
+                <select id="criteria-required-format">
+                  <option>PDF</option>
+                  <option>Notion</option>
+                  <option>Google Docs</option>
+                </select>
+              </label>
+            </div>
+            <label class="inline-check">
+              <input id="criteria-require-chart" type="checkbox" checked />
+              요약 + 표/차트 포함
+            </label>
+            <label
+              >반드시 답변해야 할 질문 (줄바꿈 구분)
+              <textarea
+                id="criteria-required-questions"
+                rows="3"
+                placeholder="예) 이번 주 상승/하락 주요 요인은?\n예) 다음 주 리스크 Top3는?"
+              ></textarea>
+            </label>
+            <label
+              >추가 요구사항
+              <textarea
+                id="criteria-extra-notes"
+                rows="2"
+                placeholder="예) 한국어 보고서, 표는 섹터별 수익률 포함"
+              ></textarea>
+            </label>
+            <label class="inline-check">
+              <input id="create-auto-fund" type="checkbox" checked />
+              생성 후 자동으로 예치(Fund) 실행
+            </label>
+            <button class="btn btn-secondary" type="submit" data-busy-lock>의뢰 등록</button>
+          </form>
+        </article>
+
+        <article class="panel">
+          <h2>진행중 작업 제어</h2>
+          <p class="hint">작업 번호로 조회 후 필요한 액션을 실행하세요.</p>
+          <div class="stack">
+            <label
+              >Target Job ID
+              <input id="action-job-id" type="text" placeholder="예: 1740465432" />
+            </label>
+            <div class="actions-row">
+              <button id="btn-fetch-job" class="btn btn-primary" data-busy-lock>조회</button>
+              <button id="btn-fund" class="btn btn-secondary" data-busy-lock>예치</button>
+              <button id="btn-timeout-buyer" class="btn btn-ghost" data-busy-lock>
+                Timeout
+              </button>
+            </div>
+            <hr class="divider" />
+            <h3>결과 검토</h3>
+            <div class="actions-row">
+              <button id="btn-approve" class="btn btn-primary" data-busy-lock>승인 후 정산</button>
+              <button id="btn-reject" class="btn btn-secondary" data-busy-lock>거절 후 분쟁</button>
+            </div>
+            <p id="job-next-action" class="hint">작업을 조회하면 추천 액션이 표시됩니다.</p>
+          </div>
+        </article>
+      </section>
+
+      <section class="grid two buyer-detail-grid">
+        <article class="panel">
+          <div class="job-summary-head">
+            <h2>작업 상세</h2>
+            <span id="job-status-chip" class="status-chip tone-muted">No job selected</span>
+          </div>
+          <dl class="summary-grid">
+            <div>
+              <dt>Job ID</dt>
+              <dd id="summary-job-id">-</dd>
+            </div>
+            <div>
+              <dt>보상금</dt>
+              <dd id="summary-reward">-</dd>
+            </div>
+            <div>
+              <dt>마감시각</dt>
+              <dd id="summary-deadline">-</dd>
+            </div>
+            <div>
+              <dt>최근 업데이트</dt>
+              <dd id="summary-updated">-</dd>
+            </div>
+            <div>
+              <dt>운영자 수령액</dt>
+              <dd id="summary-operator-receive">-</dd>
+            </div>
+            <div>
+              <dt>발주자 환불액</dt>
+              <dd id="summary-buyer-refund">-</dd>
+            </div>
+          </dl>
+          <details class="raw-panel">
+            <summary>Raw Job JSON</summary>
+            <pre id="job-view" class="code compact"></pre>
+          </details>
+          <details class="raw-panel" open>
+            <summary>요청 스펙 / 성공 기준</summary>
+            <pre id="spec-view" class="code compact"></pre>
+          </details>
+        </article>
+
+        <article class="panel">
+          <h2>내 작업 보드</h2>
+          <p class="hint">최근 조회/생성한 작업이 저장됩니다.</p>
+          <div id="recent-jobs" class="job-list"></div>
+        </article>
+      </section>
+
+      <section class="panel buyer-devtools-hidden" aria-hidden="true">
+        <div class="actions-row">
+          <button id="btn-bootstrap" class="btn btn-ghost" data-busy-lock type="button">
+            Bootstrap
+          </button>
+          <button id="btn-refresh" class="btn btn-ghost" data-busy-lock type="button">
+            Refresh
+          </button>
+        </div>
+        <div id="activity-feed" class="activity-feed"></div>
+        <pre id="log-view" class="code compact"></pre>
+        <pre id="wallets-view" class="code compact"></pre>
+        <pre id="config-view" class="code compact"></pre>
+        <pre id="phantom-view" class="code compact"></pre>
+      </section>
+    </main>
+
+    <script src="https://unpkg.com/@solana/web3.js@1.95.8/lib/index.iife.min.js"></script>
+    <script src="/buyer.js"></script>
+  </body>
+</html>
