@@ -13,7 +13,9 @@ COPY frontend ./frontend
 
 RUN npm --prefix frontend run build
 
-RUN chmod +x scripts/docker_app_entrypoint.sh
+# Convert CRLF to LF for shell scripts (Windows/Mac compatibility)
+RUN apt-get update && apt-get install -y dos2unix && rm -rf /var/lib/apt/lists/*
+RUN dos2unix scripts/docker_app_entrypoint.sh && chmod +x scripts/docker_app_entrypoint.sh
 
 EXPOSE 8787
 

@@ -50,6 +50,7 @@ type JobSpec = {
   decidedAt: string | null;
   submittedAt: string | null;
   lastSubmissionPreview: string;
+  lastSubmissionBody?: string;
   createdAt: string;
   updatedAt: string;
 };
@@ -95,6 +96,8 @@ const STABLE_BASE_UNITS = 10n ** BigInt(STABLE_DECIMALS);
 const DEFAULT_BOOTSTRAP_MINT_AMOUNT = String(
   process.env.BOOTSTRAP_BUYER_UNITS ?? "1000000000"
 );
+const FAUCET_ENABLED =
+  String(process.env.FAUCET_ENABLED ?? "true").toLowerCase() !== "false";
 const ROLE_DIR = resolve(process.cwd(), ".app-wallets");
 const META_DIR = resolve(process.cwd(), ".run");
 const META_STORE_PATH = join(META_DIR, "request_market_store.json");
@@ -780,6 +783,11 @@ app.post(
   "/api/bootstrap",
   wrap(async (req: Request, res: Response) => {
     const bootstrapSol = toNumber(req.body?.sol, 2);
+    try {
+      await client.airdrop(roles.admin.publicKey, bootstrapSol);
+    } catch (_e) {
+      // ignore airdrop failures (non-localnet, faucet disabled)
+    }
     const preConfig = await client.fetchConfig();
     const stableMint = preConfig?.stableMint ?? (await ensureStableMint());
     if (preConfig?.stableMint) {
@@ -855,18 +863,26 @@ app.post(
 app.post(
   "/api/airdrop",
   wrap(async (req: Request, res: Response) => {
-    const role = (req.body.role ?? "buyer") as RoleName;
     const sol = toNumber(req.body.sol, 2);
-    if (!roles[role]) {
+    const owner =
+      req.body?.owner === undefined ||
+      req.body?.owner === null ||
+      req.body?.owner === ""
+        ? null
+        : toPubkey(req.body.owner, "owner");
+    const role = (req.body.role ?? "buyer") as RoleName;
+    const target =
+      owner ?? (roles[role] ? roles[role].publicKey : undefined);
+    if (!target) {
       throw new Error(`invalid role: ${role}`);
     }
 
-    const signature = await client.airdrop(roles[role].publicKey, sol);
+    const signature = await client.airdrop(target, sol);
     res.json({
       ok: true,
-      role,
+      role: owner ? null : role,
       sol,
-      pubkey: roles[role].publicKey.toBase58(),
+      pubkey: target.toBase58(),
       signature,
     });
   })
@@ -875,6 +891,9 @@ app.post(
 app.post(
   "/api/token/faucet",
   wrap(async (req: Request, res: Response) => {
+    if (!FAUCET_ENABLED) {
+      throw new Error("faucet is disabled");
+    }
     const owner =
       req.body?.owner === undefined ||
       req.body?.owner === null ||
@@ -892,6 +911,11 @@ app.post(
       stableMint,
       owner
     );
+    try {
+      await client.airdrop(roles.admin.publicKey, 2);
+    } catch (_e) {
+      // ignore airdrop failures (non-localnet, faucet disabled)
+    }
     const signature = await mintTo(
       client.provider.connection,
       roles.admin,
@@ -1162,6 +1186,7 @@ app.post(
       decidedAt: null,
       submittedAt: prev?.submittedAt ?? null,
       lastSubmissionPreview: prev?.lastSubmissionPreview ?? "",
+      lastSubmissionBody: prev?.lastSubmissionBody ?? "",
       createdAt: prev?.createdAt ?? ts,
       updatedAt: ts,
     };
@@ -1522,6 +1547,7 @@ app.post(
             : linkedSpec.requestStatus,
         submittedAt: nowIso(),
         lastSubmissionPreview: submission.slice(0, 180),
+        lastSubmissionBody: submission.slice(0, 10_000),
         updatedAt: nowIso(),
       };
       persistMetaStore(metaStore);
@@ -1682,7 +1708,8 @@ if (HAS_FRONTEND_BUILD) {
 }
 
 app.use((err: any, _req: Request, res: Response, _next: unknown) => {
-  const message = err?.message ?? "unknown error";
+  const message = String(err?.message ?? err ?? "").trim() || "unknown error";
+  console.error("[error]", err);
   res.status(400).json({ ok: false, error: message });
 });
 

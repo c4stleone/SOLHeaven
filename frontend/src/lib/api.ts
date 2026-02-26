@@ -145,6 +145,7 @@ export function bootstrapSystem(payload?: { sol?: number; buyerUnits?: string })
 export function airdropRole(payload?: {
   role?: "admin" | "ops" | "buyer" | "operator" | "treasury";
   sol?: number;
+  owner?: string;
 }) {
   return post("/api/airdrop", payload ?? {});
 }
@@ -253,4 +254,16 @@ export function timeoutJob(payload: {
   actorRole: "buyer" | "ops";
 }) {
   return post("/api/jobs/timeout", payload);
+}
+
+export function reviewJob(payload: { jobId: string; approve: boolean }) {
+  return post("/api/jobs/review", payload);
+}
+
+export function tokenFaucet(payload: {
+  owner?: string;
+  amountUnits?: string;
+  amount?: string;
+}) {
+  return post("/api/token/faucet", payload ?? {});
 }

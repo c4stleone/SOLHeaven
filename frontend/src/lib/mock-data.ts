@@ -1,10 +1,10 @@
-import { CatalogItem, JobSpec, McpConnection } from "./types";
+﻿import { CatalogItem, JobSpec, McpConnection } from "./types";
 
 export const mockServices: CatalogItem[] = [
   {
     id: "svc-research-01",
     title: "시장 분석 리포트",
-    summary: "타겟 산업의 시장 규모, 경쟁 구도, 트렌드를 분석한 리포트를 생성합니다.",
+    summary: "대형주/섹터 동향, 경쟁 구도, 매크로 이슈를 분석해 리포트를 제공합니다.",
     category: "Research",
     outputFormat: "PDF",
     agentPriceLamports: "5000000",
@@ -13,8 +13,8 @@ export const mockServices: CatalogItem[] = [
   },
   {
     id: "svc-code-audit-01",
-    title: "스마트 컨트랙트 감사",
-    summary: "Solana Anchor 프로그램의 보안 취약점을 분석하고 리포트를 제출합니다.",
+    title: "스마트컨트랙트 감사",
+    summary: "Solana Anchor 프로그램의 보안 취약점을 점검하고 리포트를 제공합니다.",
     category: "Security",
     outputFormat: "Markdown",
     agentPriceLamports: "15000000",
@@ -24,7 +24,7 @@ export const mockServices: CatalogItem[] = [
   {
     id: "svc-data-01",
     title: "온체인 데이터 파이프라인",
-    summary: "Solana 트랜잭션 데이터를 수집하고 대시보드용 데이터셋을 구축합니다.",
+    summary: "Solana 트랜잭션 데이터를 수집하고 대시보드로 제공합니다.",
     category: "Data",
     outputFormat: "CSV + Dashboard",
     agentPriceLamports: "8000000",
@@ -51,7 +51,7 @@ export const mockJobs: JobSpec[] = [
     serviceId: "svc-research-01",
     serviceTitle: "시장 분석 리포트",
     taskTitle: "2026 DePIN 시장 분석",
-    taskBrief: "DePIN 섹터의 시장 규모와 주요 프로젝트 분석",
+    taskBrief: "DePIN 섹터의 시장 규모와 주요 프로젝트를 분석",
     requestStatus: "approved",
     decisionReason: "기준 충족",
     decidedAt: "2026-02-24T12:00:00Z",
@@ -66,14 +66,14 @@ export const mockJobs: JobSpec[] = [
     buyer: "7xKX...pQ3r",
     jobId: "2",
     serviceId: "svc-code-audit-01",
-    serviceTitle: "스마트 컨트랙트 감사",
+    serviceTitle: "스마트컨트랙트 감사",
     taskTitle: "OutcomeEscrow v2 보안 감사",
-    taskBrief: "새 SPL 토큰 정산 로직의 취약점 분석",
+    taskBrief: "SPL 토큰 정산 로직의 취약점 검토",
     requestStatus: "approved",
     decisionReason: "",
     decidedAt: "2026-02-25T09:00:00Z",
     submittedAt: "2026-02-25T14:00:00Z",
-    lastSubmissionPreview: "총 3건의 Medium 이슈 발견, 상세 내용은 첨부 리포트 참조",
+    lastSubmissionPreview: "총 3건의 Medium 이슈 발견, 상세 내용 첨부",
     createdAt: "2026-02-24T08:00:00Z",
     updatedAt: "2026-02-25T14:00:00Z",
     onChainStatus: 2,
@@ -85,7 +85,7 @@ export const mockJobs: JobSpec[] = [
     serviceId: "svc-data-01",
     serviceTitle: "온체인 데이터 파이프라인",
     taskTitle: "Jupiter DEX 거래량 분석",
-    taskBrief: "최근 30일 Jupiter 거래량 및 유동성 데이터 수집",
+    taskBrief: "최근 30일 Jupiter 거래량 및 주요 구간 분석",
     requestStatus: "pending",
     decisionReason: "",
     decidedAt: null,
